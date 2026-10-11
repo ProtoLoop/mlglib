@@ -58,8 +58,8 @@ public:
         const unsigned width, const unsigned height, const std::string_view& name) const;
 
     /// Creates a staging buffer for copying texture data to the GPU.
-    Result<wgpu::Buffer> CreateStagingBuffer(wgpu::Texture texture,
-        const std::string_view& name) const;
+    Result<wgpu::Buffer> CreateStagingBuffer(
+        const uint32_t width, const uint32_t height, const std::string_view& name) const;
 
     /// Commits the data in the staging buffer to texture memory on the GPU.
     Result<> CommitStagingBuffer(wgpu::Texture texture, wgpu::Buffer stagingBuffer) const;

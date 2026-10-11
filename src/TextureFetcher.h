@@ -3,7 +3,7 @@
 #include "CoopTask.h"
 #include "FilePath.h"
 #include "Result.h"
-#include "TextureHelpers.h"
+#include "TextureHelper.h"
 
 #include <cstddef>
 #include <deque>

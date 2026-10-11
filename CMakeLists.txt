@@ -161,7 +161,7 @@ function(compiler_flags target_name)
 endfunction()
 
 # ============================================================
-# Dependencies (SDL3, spdlog, stb)
+# Dependencies (SDL3, spdlog, stb, etc.)
 # ============================================================
 
 # --- Google Test
@@ -300,6 +300,11 @@ target_compile_definitions(imgui PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
 # --- box3d
 add_subdirectory(thirdparty/box3d EXCLUDE_FROM_ALL SYSTEM)
 
+# --- libktx
+set(LIBKTX_FEATURE_GL_UPLOAD OFF CACHE BOOL "Enable OpenGL upload" FORCE)
+set(LIBKTX_FEATURE_VK_UPLOAD OFF CACHE BOOL "Enable Vulkan upload" FORCE)
+add_subdirectory(thirdparty/KTX-Software/lib EXCLUDE_FROM_ALL SYSTEM)
+
 # ============================================================
 # Enable clang-tidy only after all thirdparty targets exist
 # ============================================================
@@ -374,7 +379,7 @@ set(SSG_SOURCES
   src/stb_image.cpp
   src/System.cpp
   src/TextureFetcher.cpp
-  src/TextureHelpers.cpp
+  src/TextureHelper.cpp
   src/ThreadPool.cpp
   src/Timer.cpp
   src/VecMath.cpp
@@ -417,7 +422,7 @@ set(SSG_HEADERS
   src/Shell.h
   src/System.h
   src/TextureFetcher.h
-  src/TextureHelpers.h
+  src/TextureHelper.h
   src/ThreadPool.h
   src/Timer.h
   src/VecMath.h
@@ -498,6 +503,7 @@ endfunction()
 # Tool: Cook
 # ============================================================
 add_tool_executable(Cook tools/Cook/Cook.cpp)
+target_link_libraries(Cook PRIVATE ktx)
 target_include_directories(Cook SYSTEM PRIVATE thirdparty/stb)
 
 # ============================================================

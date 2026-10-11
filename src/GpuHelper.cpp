@@ -324,7 +324,9 @@ CreateDefaultTexture(GpuHelper& gpuHelper)
 
     MLG_CHECK(texture);
 
-    auto stagingBuffer = gpuHelper.CreateStagingBuffer(*texture, "DefaultTextureStagingBuffer");
+    auto stagingBuffer = gpuHelper.CreateStagingBuffer(texture->GetWidth(),
+        texture->GetHeight(),
+        "DefaultTextureStagingBuffer");
     MLG_CHECK(stagingBuffer);
 
     void* mapped = stagingBuffer->GetMappedRange();
@@ -984,10 +986,11 @@ GpuHelper::CreateDepthBuffer(
 // is slow compared to using a staging buffer and CopyBufferToTexture.
 
 Result<wgpu::Buffer>
-GpuHelper::CreateStagingBuffer(wgpu::Texture texture, const std::string_view& name) const
+GpuHelper::CreateStagingBuffer(
+    const uint32_t width, const uint32_t height, const std::string_view& name) const
 {
-    const size_t rowStride = GetTextureAlignedRowStride(texture.GetWidth());
-    const size_t sizeofBuffer = rowStride * texture.GetHeight();
+    const size_t rowStride = GetTextureAlignedRowStride(width);
+    const size_t sizeofBuffer = rowStride * height;
     const wgpu::BufferUsage usage = wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc;
 
     auto buffer = CreateGpuBuffer(usage, sizeofBuffer, BufferMappedState::Mapped, name);
