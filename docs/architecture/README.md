@@ -12,11 +12,13 @@ Each file has a different job:
 | [Conventions](conventions.md) | How project code is expected to be written |
 | [Decisions](decisions.md) | Important choices and the reasons behind them |
 | [Architecture Backlog](backlog.md) | Architectural questions that still need a decision |
+| [Asset Flow](asset-flow.md) | How assets become definitions and cooked resources, and how runtime loading will use them |
 
 The categories are related but should stay separate. Principles guide our
 judgment. Patterns show how we put those principles into practice. Conventions
 record concrete expectations for project code. Decisions record why we chose
-one direction over another.
+one direction over another. System descriptions such as Asset Flow explain how
+the parts fit together and distinguish current behavior from planned work.
 
 ## Writing style
 
