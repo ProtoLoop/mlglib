@@ -72,7 +72,9 @@ using OffsetType = ResourceBundle::OffsetType;
 using Header = ResourceBundle::Header;
 
 constexpr IndexType kInvalidIndex = ResourceBundle::kInvalidIndex;
+#ifndef NDEBUG
 constexpr OffsetType kInvalidOffset = ResourceBundle::kInvalidOffset;
+#endif
 constexpr size_t kMaxBundleSize = ResourceBundle::kMaxBundleSize;
 
 template<typename T>

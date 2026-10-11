@@ -25,3 +25,6 @@
 [submodule "thirdparty/box3d"]
 	path = thirdparty/box3d
 	url = https://github.com/erincatto/box3d.git
+[submodule "thirdparty/KTX-Software"]
+	path = thirdparty/KTX-Software
+	url = https://github.com/KhronosGroup/KTX-Software.git

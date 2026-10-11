@@ -595,6 +595,9 @@ ShapeDefs::Torus(const TorusParams& params)
     MLG_ASSERT(numSegmentsMajor > 0);
     MLG_ASSERT(numSegmentsMinor > 0);
 
+    MLG_ABORTIF(numSegmentsMajor == 0 || numSegmentsMinor == 0,
+        "Torus segment counts must be nonzero");
+
     const float dTheta = 2.0f * kPi / static_cast<float>(numSegmentsMajor);
     const float dPhi = 2.0f * kPi / static_cast<float>(numSegmentsMinor);
 
