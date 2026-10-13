@@ -81,6 +81,7 @@ private:
 
     std::vector<GpuMaterialProperties> m_MaterialProperties;
 
+    /// Scratch space for storing culled meshes each frame.
     std::vector<MeshInstance> m_CulledMeshes;
 
     /// The number of mesh instances in the scene.

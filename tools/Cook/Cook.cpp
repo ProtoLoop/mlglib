@@ -11,7 +11,7 @@
 #include "ThreadPool.h"
 #include "Timer.h"
 
-#include <bit>
+#include <bc7enc.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -29,24 +29,17 @@
 #include <string_view>
 #include <system_error>
 #include <type_traits>
-#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
 namespace
 {
-
-/// Texture row alignment in bytes.
-constexpr uint32_t kTextureRowAlignment = 256;
-
 static_assert(std::is_trivially_copyable_v<TextureHelper::TextureHeader>);
 static_assert(std::is_standard_layout_v<TextureHelper::TextureHeader>);
 static_assert(sizeof(TextureHelper::TextureHeader) == 20); // NOLINT(readability-magic-numbers)
 
 static_assert(GpuHelper::kNumTextureChannels == 4);
-// Ensures that the texture row alignment is a power of two.
-static_assert(std::has_single_bit(kTextureRowAlignment));
-static_assert(kTextureRowAlignment % GpuHelper::kNumTextureChannels == 0);
 
 struct KtxTextureDeleter
 {
@@ -87,7 +80,9 @@ struct RawImageData
     std::span<const std::byte> GetBytes() const noexcept
     {
         const void* p = static_cast<void*>(StbData.get());
-        const size_t sizeofData = static_cast<size_t>(Width) * static_cast<size_t>(Height) * static_cast<size_t>(ChannelCount);
+        const size_t sizeofData = static_cast<size_t>(Width)
+            * static_cast<size_t>(Height)
+            * static_cast<size_t>(ChannelCount);
         return std::span<const std::byte>(static_cast<const std::byte*>(p), sizeofData);
     }
 
@@ -95,6 +90,16 @@ struct RawImageData
     uint32_t Height{ 0 };
     uint32_t ChannelCount{ 0 };
     StbDataPtr StbData;
+};
+
+struct CompressedImageData
+{
+    uint32_t Width{ 0 };
+    uint32_t Height{ 0 };
+    uint32_t ChannelCount{ 0 };
+    KtxTexturePtr BC7Texture;
+    KtxTexturePtr ASTCTexture;
+    KtxTexturePtr ETC2Texture;
 };
 
 /// Command line arguments for the cook tool.
@@ -119,9 +124,8 @@ struct CookDirs
 /// Parameters for a worker that cooks a texture.
 struct CookTextureWorkerParams
 {
-    const CookDirs* CookDirs;
-    SceneDefs::FilePathString InTexturePath;
-    SceneDefs::FilePathString OutTexturePath;
+    CookDirs CookDirs;
+    RelativeFilePath TexturePath;
     std::latch* Latch{ nullptr };
     Result<> Result;
 };
@@ -211,34 +215,27 @@ AlignUp(uint32_t value, uint32_t alignment)
     return (value + (alignment - 1)) & ~(alignment - 1);
 }
 
-Result<std::unordered_map<SceneDefs::FilePathString, SceneDefs::FilePathString>>
-ReplaceTexturePaths(std::span<ModelDef> modelDefs)
+/// Replaces the file extension of texture paths in the model def with ".ctex".
+Result<std::vector<SceneDefs::RelativePathString>>
+CollectTexturePaths(std::span<ModelDef> modelDefs)
 {
-    std::unordered_map<SceneDefs::FilePathString, SceneDefs::FilePathString> texPathMap;
-    for(ModelDef& modelDef : modelDefs)
+    std::unordered_set<SceneDefs::RelativePathString> dedup;
+    for(const ModelDef& modelDef : modelDefs)
     {
-        for(MeshDef& meshDef : modelDef.MeshDefs)
+        for(const MeshDef& meshDef : modelDef.MeshDefs)
         {
-            SceneDefs::FilePathString& texPath = meshDef.MaterialDef.BaseTexturePath;
+            const SceneDefs::RelativePathString& texPath = meshDef.MaterialDef.BaseTexturePath;
 
-            if(!texPath.empty())
+            if(texPath.empty() || dedup.contains(texPath))
             {
-                if(!texPathMap.contains(texPath))
-                {
-                    std::filesystem::path texPathFsPath = std::string_view(texPath);
-
-                    const SceneDefs::FilePathString newPath(
-                        texPathFsPath.replace_extension(".ctex").string());
-
-                    texPathMap.emplace(texPath, newPath);
-                }
-
-                texPath = texPathMap.at(texPath);
+                continue;
             }
+
+            dedup.emplace(texPath);
         }
     }
 
-    return texPathMap;
+    return std::vector<SceneDefs::RelativePathString>(dedup.begin(), dedup.end());
 }
 
 using ByteSpan = std::span<const std::byte>;
@@ -270,6 +267,8 @@ WriteFile(const std::filesystem::path& path, std::initializer_list<ByteSpan> byt
 Result<RawImageData>
 LoadRawImage(const CookDirs& cookDirs, const std::string_view texturePath)
 {
+    MLG_INFO("Loading image: {}...", texturePath);
+
     const std::filesystem::path textureFullPath = (cookDirs.InputDir / texturePath);
     std::ifstream stream(textureFullPath, std::ios::binary);
     MLG_CHECKV(stream.is_open(),
@@ -280,12 +279,12 @@ LoadRawImage(const CookDirs& cookDirs, const std::string_view texturePath)
     const uintmax_t fileSize = std::filesystem::file_size(textureFullPath, ec);
     MLG_CHECKV(!ec, "Failed to get image file size: {}", ec.message());
 
+    MLG_CHECKV(fileSize > 0, "Image file is empty: {}", textureFullPath.string());
+
     // Make sure the file size fits within an int for stb_image.
     MLG_CHECKV(fileSize <= static_cast<uintmax_t>(std::numeric_limits<int>::max()),
         "Image file too large: {}",
         textureFullPath.string());
-
-    MLG_CHECKV(fileSize > 0, "Image file is empty: {}", textureFullPath.string());
 
     std::vector<char> fileData;
 
@@ -298,7 +297,7 @@ LoadRawImage(const CookDirs& cookDirs, const std::string_view texturePath)
     stream.read(fileData.data(), static_cast<std::streamsize>(fileData.size()));
     MLG_CHECKV(stream.good(), "Failed to read image file: {}", textureFullPath.string());
 
-    MLG_INFO("Loading image: {}", textureFullPath.string());
+    stream.close();
 
     constexpr int kDesiredChannels = GpuHelper::kNumTextureChannels;
 
@@ -321,7 +320,7 @@ LoadRawImage(const CookDirs& cookDirs, const std::string_view texturePath)
         static_cast<uint32_t>(kDesiredChannels),
         imgData);
 
-    // Free the memory used by the original image data as it is no longer needed.
+    // Free the memory used by the original image data.
     std::vector<char>().swap(fileData);
 
     MLG_CHECKV(rawImageData.ChannelCount > 0,
@@ -336,10 +335,14 @@ LoadRawImage(const CookDirs& cookDirs, const std::string_view texturePath)
     return std::move(rawImageData);
 }
 
-[[maybe_unused]]
-Result<std::vector<std::byte>>
-CompressRawImageToBc7(const RawImageData& rawImageData)
+Result<CompressedImageData>
+CompressRawImage(const RawImageData& rawImageData, const std::string_view texturePath)
 {
+    MLG_INFO("Compressing image: {}...", texturePath);
+
+    Timer timer;
+    timer.Start();
+
     const uint32_t width = rawImageData.Width;
     const uint32_t height = rawImageData.Height;
     const uint32_t channelCount = rawImageData.ChannelCount;
@@ -376,12 +379,12 @@ CompressRawImageToBc7(const RawImageData& rawImageData)
         "ktxTexture2_Create failed with error code {}",
         ktxErrorString(ktxe));
 
-    const KtxTexturePtr texture{ rawTexture };
+    const KtxTexturePtr origTexture{ rawTexture };
 
     const void* p = rgba.data();
     const uint8_t* rgbaBytes = static_cast<const uint8_t*>(p);
 
-    ktxe = ktxTexture_SetImageFromMemory(ktxTexture(texture.get()),
+    ktxe = ktxTexture_SetImageFromMemory(ktxTexture(origTexture.get()),
         0, // Mipmap level
         0, // Array layer
         0, // Cube face
@@ -397,60 +400,71 @@ CompressRawImageToBc7(const RawImageData& rawImageData)
     basisParams.codec = KTX_BASIS_CODEC_UASTC_LDR_4x4;
     basisParams.uastcFlags = KTX_PACK_UASTC_LEVEL_DEFAULT | KTX_PACK_UASTC_FAVOR_BC7_ERROR;
     basisParams.uastcRDO = KTX_FALSE;
-    basisParams.verbose = KTX_TRUE;
+    //basisParams.verbose = KTX_TRUE;
     basisParams.threadCount = std::max(1u, std::thread::hardware_concurrency());
 
-    /*ktxBasisParams basisParams{};
-    basisParams.structSize = sizeof(basisParams);
+    MLG_INFO("Encoding image to basis: {}...", texturePath);
 
-    // libktx 5 replacement for basisParams.uastc = KTX_TRUE.
-    basisParams.codec = KTX_BASIS_CODEC_UASTC_LDR_4x4;
-
-    // High-quality UASTC encoding tuned for subsequent BC7 transcoding.
-    basisParams.uastcFlags = KTX_PACK_UASTC_LEVEL_SLOWER | KTX_PACK_UASTC_FAVOR_BC7_ERROR;
-
-    // RDO helps losslessly compress stored UASTC data, but can reduce
-    // image quality. It provides no size benefit after extracting raw BC7.
-    basisParams.uastcRDO = KTX_FALSE;
-
-    // Zero uses the encoder default.
-    basisParams.threadCount = 0;*/
-
-    ktxe = ktxTexture2_CompressBasisEx(texture.get(), &basisParams);
+    ktxe = ktxTexture2_CompressBasisEx(origTexture.get(), &basisParams);
     MLG_CHECKV(ktxe == KTX_SUCCESS,
         "ktxTexture2_CompressBasisEx failed with error code {}",
         ktxErrorString(ktxe));
 
-    ktxe = ktxTexture2_TranscodeBasis(texture.get(), KTX_TTF_BC7_RGBA, 0);
-    MLG_CHECKV(ktxe == KTX_SUCCESS,
-        "ktxTexture2_TranscodeBasis failed with error code {}",
-        ktxErrorString(ktxe));
+    CompressedImageData compressedImageData //
+        {
+            .Width = width,
+            .Height = height,
+            .ChannelCount = channelCount,
+        };
 
-    ktx_size_t imageOffset = 0;
+    struct TranscodeFormat
+    {
+        ktx_transcode_fmt_e Format;
+        const char* Name;
+    };
 
-    ktxe = ktxTexture_GetImageOffset(ktxTexture(texture.get()),
-        0, // Mipmap level
-        0, // Array layer
-        0, // Cube face
-        &imageOffset);
-    MLG_CHECKV(ktxe == KTX_SUCCESS,
-        "ktxTexture_GetImageOffset failed with error code {}",
-        ktxErrorString(ktxe));
+    constexpr TranscodeFormat targetFormats[] //
+        {
+            { .Format = KTX_TTF_BC7_RGBA, .Name = "BC7" },
+            { .Format = KTX_TTF_ASTC_LDR_4x4_RGBA, .Name = "ASTC" },
+            { .Format = KTX_TTF_ETC2_RGBA, .Name = "ETC2" },
+        };
 
-    const ktx_uint8_t* textureData = ktxTexture_GetData(ktxTexture(texture.get()));
-    const ktx_size_t textureDataSize = ktxTexture_GetDataSize(ktxTexture(texture.get()));
+    for(const TranscodeFormat& targetFormat : targetFormats)
+    {
+        MLG_INFO("Transcoding image: {} -> {}...", texturePath, targetFormat.Name);
 
-    MLG_CHECK(textureData != nullptr, "Transcoded texture contains no image data");
+        ktxTexture2* rawTextureCopy = nullptr;
+        ktxTexture2_CreateCopy(origTexture.get(), &rawTextureCopy);
+        MLG_CHECKV(rawTextureCopy != nullptr, "ktxTexture2_CreateCopy failed");
 
-    p = static_cast<const void*>(textureData);
-    const std::byte* textureBytes = static_cast<const std::byte*>(p);
-    const std::span<const std::byte> texDataSpan(textureBytes, textureDataSize);
+        KtxTexturePtr textureCopy{ rawTextureCopy };
 
-    const ktx_size_t imageSize = ktxTexture_GetImageSize(ktxTexture(texture.get()), 0);
+        ktxe = ktxTexture2_TranscodeBasis(textureCopy.get(), targetFormat.Format, 0);
+        MLG_CHECKV(ktxe == KTX_SUCCESS,
+            "ktxTexture2_TranscodeBasis failed with error code {}",
+            ktxErrorString(ktxe));
 
-    const std::span<const std::byte> imageDataSpan = texDataSpan.subspan(imageOffset, imageSize);
+        switch(targetFormat.Format)
+        {
+            case KTX_TTF_BC7_RGBA:
+                compressedImageData.BC7Texture = std::move(textureCopy);
+                break;
+            case KTX_TTF_ASTC_LDR_4x4_RGBA:
+                compressedImageData.ASTCTexture = std::move(textureCopy);
+                break;
+            case KTX_TTF_ETC2_RGBA:
+                compressedImageData.ETC2Texture = std::move(textureCopy);
+                break;
+            default:
+                MLG_CHECKV(false, "Unsupported target format");
+        }
+    }
 
-    return std::vector<std::byte>(imageDataSpan.begin(), imageDataSpan.end());
+    timer.Stop();
+    MLG_INFO("Compressed {} in {} ms", texturePath, timer.GetElapsedSeconds() * 1000);
+
+    return std::move(compressedImageData);
 }
 
 Result<>
@@ -458,15 +472,33 @@ WriteTexture(const CookDirs& cookDirs,
     const std::string_view texturePath,
     const uint32_t width,
     const uint32_t height,
-    const std::span<const std::byte> textureData)
+    const CompressedImageData& compressedImages)
 {
-    const std::filesystem::path outPath = cookDirs.OutputDir / std::filesystem::path(texturePath);
+    const std::filesystem::path srcPath = (cookDirs.InputDir / texturePath);
+    const std::filesystem::path dstPath = (cookDirs.OutputDir / texturePath);
 
+    // Ensure the output directory exists before writing the texture.
     std::error_code ec;
-    std::filesystem::create_directories(outPath.parent_path(), ec);
+    std::filesystem::create_directories(dstPath.parent_path(), ec);
     MLG_CHECKV(!ec, "Failed to create output directory: {}", ec.message());
 
-    MLG_INFO("Writing cooked texture to: {}", outPath.string());
+    MLG_INFO("Writing: {} -> {}...", srcPath.string(), dstPath.string());
+
+    // Copy the original file - it will be the fallback for HW that doesn't support the compressed
+    // formats.
+    std::filesystem::copy(srcPath, dstPath, std::filesystem::copy_options::overwrite_existing, ec);
+    MLG_CHECKV(!ec,
+        "Failed to copy texture from {} to {}: {}",
+        srcPath.string(),
+        dstPath.string(),
+        ec.message());
+
+    const std::pair<std::string_view, const KtxTexturePtr*> textures[]
+    {
+        { ".bc7", &compressedImages.BC7Texture },
+        { ".astc", &compressedImages.ASTCTexture },
+        { ".etc2", &compressedImages.ETC2Texture },
+    };
 
     const TextureHelper::TextureHeader header //
         {
@@ -474,12 +506,47 @@ WriteTexture(const CookDirs& cookDirs,
             .Height = height,
         };
 
-    const void* p = static_cast<const void*>(&header);
-    const std::span<const std::byte> headerSpan(static_cast<const std::byte*>(p), sizeof(header));
+    const std::span<const std::byte> headerSpan = std::as_bytes(std::span(&header, 1));
 
-    MLG_CHECK(WriteFile(outPath, { headerSpan, textureData }));
+    for(const auto& [ext, texturePtr] : textures)
+    {
+        const KtxTexturePtr& texPtr = *texturePtr;
+        if(!texPtr)
+        {
+            continue;
+        }
 
-    MLG_INFO("Wrote texture: {}", outPath.string());
+        ktx_size_t imageOffset = 0;
+
+        const ktx_error_code_e ktxe = ktxTexture_GetImageOffset(ktxTexture(texPtr.get()),
+            0, // Mipmap level
+            0, // Array layer
+            0, // Cube face
+            &imageOffset);
+        MLG_CHECKV(ktxe == KTX_SUCCESS,
+            "ktxTexture_GetImageOffset failed with error code {}",
+            ktxErrorString(ktxe));
+
+        const ktx_uint8_t* textureData = ktxTexture_GetData(ktxTexture(texPtr.get()));
+        const ktx_size_t textureDataSize = ktxTexture_GetDataSize(ktxTexture(texPtr.get()));
+
+        MLG_CHECK(textureData != nullptr, "Transcoded texture contains no image data");
+
+        const std::span<const std::byte> texBytes =
+            std::as_bytes(std::span(textureData, textureDataSize));
+
+        const ktx_size_t imageSize = ktxTexture_GetImageSize(ktxTexture(texPtr.get()), 0);
+
+        const std::span<const std::byte> imageDataSpan = texBytes.subspan(imageOffset, imageSize);
+
+        std::filesystem::path curDstPath = dstPath;
+
+        curDstPath.replace_extension(ext);
+
+        MLG_INFO("Writing: {} -> {}...", srcPath.string(), curDstPath.string());
+
+        MLG_CHECK(WriteFile(curDstPath, { headerSpan, imageDataSpan }));
+    }
 
     return Result<>::Ok;
 }
@@ -487,18 +554,21 @@ WriteTexture(const CookDirs& cookDirs,
 Result<>
 CookTexture(CookTextureWorkerParams& params)
 {
-    const CookDirs& cookDirs = *params.CookDirs;
-
-    auto rawImageResult = LoadRawImage(cookDirs, params.InTexturePath);
+    auto rawImageResult = LoadRawImage(params.CookDirs, params.TexturePath);
     MLG_CHECK(rawImageResult);
 
-    MLG_CHECK(rawImageResult->ChannelCount == 4, "Expected 4 channels in the raw image data.");
+    MLG_CHECK(rawImageResult->ChannelCount == 4,
+        "Expected 4 channels in the raw image data for texture: {}",
+        params.TexturePath);
 
-    MLG_CHECK(WriteTexture(cookDirs,
-        params.OutTexturePath,
+    auto compressedImageResult = CompressRawImage(*rawImageResult, params.TexturePath);
+    MLG_CHECK(compressedImageResult);
+
+    MLG_CHECK(WriteTexture(params.CookDirs,
+        params.TexturePath,
         rawImageResult->Width,
         rawImageResult->Height,
-        rawImageResult->GetBytes()));
+        *compressedImageResult));
 
     return Result<>::Ok;
 }
@@ -540,34 +610,37 @@ Cook(const CmdLinArgs& args, ThreadPool& threadPool)
 
     MLG_CHECK(args.IsValid());
 
+    const Result<CookDirs> cookDirs = CookDirs::FromArgs(args);
+    MLG_CHECK(cookDirs);
+
     auto loadResult = GltfLoader::Load(args.InputFile);
     MLG_CHECK(loadResult);
     SceneDef sceneDef = std::move(*loadResult);
 
-    auto texPathMap = ReplaceTexturePaths(sceneDef.ModelDefs);
-    MLG_CHECK(texPathMap);
-
-    const Result<CookDirs> cookDirs = CookDirs::FromArgs(args);
-    MLG_CHECK(cookDirs);
+    auto texPathsResult = CollectTexturePaths(sceneDef.ModelDefs);
+    MLG_CHECK(texPathsResult);
 
     std::vector<CookTextureWorkerParams> cookTextureParams;
-    cookTextureParams.reserve(texPathMap->size());
+    cookTextureParams.reserve(texPathsResult->size());
 
-    std::latch cookTextureLatch(static_cast<int>(texPathMap->size()));
+    std::latch cookTextureLatch(static_cast<int>(texPathsResult->size()));
 
     MLG_DEFER
     {
-        // Wait for all texture cooking tasks to complete before exiting the scope.
+        // In case of early exit due to error wait for all texture cooking tasks to complete before
+        // exiting the scope.
         cookTextureLatch.wait();
     };
 
-    for(const auto [inTexPath, outTexPath] : *texPathMap)
+    for(const auto& inTexPath : *texPathsResult)
     {
+        const auto inPathResult = RelativeFilePath::Create(inTexPath);
+        MLG_CHECK(inPathResult);
+
         const CookTextureWorkerParams tmpParams //
             {
-                .CookDirs = &*cookDirs,
-                .InTexturePath{ inTexPath },
-                .OutTexturePath{ outTexPath },
+                .CookDirs = *cookDirs,
+                .TexturePath = *inPathResult,
                 .Latch = &cookTextureLatch,
             };
 
@@ -605,99 +678,6 @@ Cook(const CmdLinArgs& args, ThreadPool& threadPool)
 
     timer.Stop();
     MLG_INFO("Cook completed in {} ms", std::trunc(timer.GetElapsedSeconds() * 1000));
-
-    return Result<>::Ok;
-}
-
-[[maybe_unused]]
-Result<>
-Cook2(const CmdLinArgs& args, ThreadPool& /*threadPool*/)
-{
-    Timer timer;
-    timer.Start();
-
-    MLG_CHECK(args.IsValid());
-
-    auto loadResult = GltfLoader::Load(args.InputFile);
-    MLG_CHECK(loadResult);
-    SceneDef sceneDef = std::move(*loadResult);
-
-    auto texPathMap = ReplaceTexturePaths(sceneDef.ModelDefs);
-    MLG_CHECK(texPathMap);
-
-    const Result<CookDirs> cookDirs = CookDirs::FromArgs(args);
-    MLG_CHECK(cookDirs);
-
-    std::vector<CookTextureWorkerParams> cookTextureParams;
-    cookTextureParams.reserve(texPathMap->size());
-
-    std::latch cookTextureLatch(static_cast<int>(texPathMap->size()));
-
-    MLG_DEFER
-    {
-        // Wait for all texture cooking tasks to complete before exiting the scope.
-        cookTextureLatch.wait();
-    };
-
-    const bool stop = false;
-    for(const auto [inTexPath, outTexPath] : *texPathMap)
-    {
-        const CookTextureWorkerParams tmpParams //
-            {
-                .CookDirs = &*cookDirs,
-                .InTexturePath{ inTexPath },
-                .OutTexturePath{ outTexPath },
-                .Latch = &cookTextureLatch,
-            };
-
-        CookTextureWorkerParams& params = cookTextureParams.emplace_back(tmpParams);
-
-        Timer timer2;
-        timer2.Start();
-        CookTextureWorker(&params);
-        timer2.Stop();
-        MLG_INFO("Cooked texture {} in {} ms",
-            inTexPath,
-            std::trunc(timer2.GetElapsedSeconds() * 1000));
-
-        if(!stop)
-        {
-            break;
-        }
-
-        /*if(!threadPool.Enqueue(CookTextureWorker, &params))
-        {
-            params.Result = Result<>::Fail;
-            params.Latch->count_down();
-        }*/
-    }
-    std::abort();
-
-    /*ResourceBundleBuilder builder;
-
-    auto buildResult = builder.Build(sceneDef);
-    MLG_CHECK(buildResult);
-
-    const ResourceBundle bundle = std::move(*buildResult);
-
-    cookTextureLatch.wait();
-
-    Result<> cookTexResult = Result<>::Ok;
-
-    for(const CookTextureWorkerParams& params : cookTextureParams)
-    {
-        if(!params.Result)
-        {
-            cookTexResult = params.Result;
-        }
-    }
-
-    MLG_CHECK(cookTexResult, "One or more texture cooking tasks failed");
-
-    MLG_CHECK(WriteResourceBundle(*cookDirs, args.InputFile, bundle));
-
-    timer.Stop();
-    MLG_INFO("Cook completed in {} ms", std::trunc(timer.GetElapsedSeconds() * 1000));*/
 
     return Result<>::Ok;
 }

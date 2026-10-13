@@ -21,6 +21,13 @@ public:
     static constexpr size_t kNumTextureChannels = 4;
     static constexpr wgpu::TextureFormat kDepthBufferFormat = wgpu::TextureFormat::Depth24Plus;
 
+    enum class TextureCompression
+    {
+        BC,
+        ETC2,
+        ASTC
+    };
+
     /// A task that creates a GpuHelper instance asynchronously.
     class CreateTask;
 
@@ -38,6 +45,7 @@ public:
     Dimension2 GetScreenDimensions() const;
     Result<GpuRenderTarget> GetSwapChainTexture() const;
     wgpu::TextureFormat GetSwapChainFormat() const;
+    bool HasTextureCompression(TextureCompression compression) const;
 
     /// Presents the current swap chain texture to the screen.
     Result<> Present() const;

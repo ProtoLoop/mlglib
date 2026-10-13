@@ -3,6 +3,7 @@
 #include "GpuHelper.h"
 
 #include "Defer.h"
+#include "Containers.h"
 
 #include <atomic>
 #include <SDL3/SDL_init.h>
@@ -27,8 +28,13 @@ constexpr std::pair<wgpu::FeatureName, const char*> kRequiredFeatures[] = //
         //{wgpu::FeatureName::MultiDrawIndirect, "MultiDrawIndirect"},
     };
 
-constexpr size_t kRequiredFeatureCount = std::size(kRequiredFeatures);
-
+constexpr std::pair<wgpu::FeatureName, const char*> kDesiredFeatures[] = //
+    {
+        { wgpu::FeatureName::TextureCompressionBC, "TextureCompressionBC" },
+        { wgpu::FeatureName::TextureCompressionETC2, "TextureCompressionETC2" },
+        { wgpu::FeatureName::TextureCompressionASTC, "TextureCompressionASTC" },
+    };
+    
 const char*
 GetPresentModeString(const wgpu::PresentMode presentMode)
 {
@@ -51,8 +57,10 @@ GetPresentModeString(const wgpu::PresentMode presentMode)
 
 void EnumerateAdapters();
 void DumpAdapterInfo(const WGPUAdapterInfo& adapterInfo);
+void DumpAdapterFeatures(const wgpu::Adapter& adapter);
 void DumpDawnToggles(const wgpu::Device& device);
-void DumpWebgpuLimits(const wgpu::Device& device);
+void DumpDeviceLimits(const wgpu::Device& device);
+void DumpDeviceFeatures(const wgpu::Device& device);
 
 Result<SDL_Window*>
 CreateSdlWindow(const std::string_view appName)
@@ -645,6 +653,8 @@ GpuHelper::CreateTask::FinalizeAdapter()
     MLG_INFO("Selected adapter:");
     DumpAdapterInfo(adapterInfo);
 
+    DumpAdapterFeatures(m_Adapter);
+
     return Result<>::Ok;
 }
 
@@ -675,10 +685,19 @@ GpuHelper::CreateTask::CreateDevice()
     // toggles.disabledToggles = disabledToggles;
 #endif
 
-    wgpu::FeatureName requiredFeatures[kRequiredFeatureCount];
-    for(size_t i = 0; i < kRequiredFeatureCount; ++i)
+    InplaceVector<wgpu::FeatureName, std::size(kRequiredFeatures) + std::size(kDesiredFeatures)>
+        requiredFeatures;
+    for(const auto [feature, name] : kRequiredFeatures)
     {
-        requiredFeatures[i] = kRequiredFeatures[i].first;
+        requiredFeatures.emplace_back(feature);
+    }
+
+    for(const auto [feature, name] : kDesiredFeatures)
+    {
+        if(m_Adapter.HasFeature(feature))
+        {
+            requiredFeatures.emplace_back(feature);
+        }
     }
 
     const wgpu::Limits requiredLimits{};
@@ -697,8 +716,8 @@ GpuHelper::CreateTask::CreateDevice()
 #endif
                 .nextInChain = nullptr,
                 .label = "MainDevice",
-                .requiredFeatureCount = kRequiredFeatureCount,
-                .requiredFeatures = &requiredFeatures[0],
+                .requiredFeatureCount = requiredFeatures.size(),
+                .requiredFeatures = requiredFeatures.data(),
                 .requiredLimits = &requiredLimits,
             },
         };
@@ -722,7 +741,8 @@ GpuHelper::CreateTask::FinalizeDevice()
     m_Device = wgpu::Device::Acquire(*m_DeviceRequestData.Result);
 
     DumpDawnToggles(m_Device);
-    DumpWebgpuLimits(m_Device);
+    DumpDeviceLimits(m_Device);
+    DumpDeviceFeatures(m_Device);
 
     return Result<>::Ok;
 }
@@ -865,6 +885,21 @@ wgpu::TextureFormat
 GpuHelper::GetSwapChainFormat() const
 {
     return m_SurfaceFormat;
+}
+bool
+GpuHelper::HasTextureCompression(TextureCompression compression) const
+{
+    switch(compression)
+    {
+    case TextureCompression::BC:
+        return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionBC);
+    case TextureCompression::ETC2:
+        return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionETC2);
+    case TextureCompression::ASTC:
+        return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionASTC);
+    default:
+        return false;
+    }
 }
 
 Result<>
@@ -1269,7 +1304,7 @@ DumpDawnToggles(const wgpu::Device& device)
 #endif // __EMSCRIPTEN__
 
 void
-DumpWebgpuLimits(const wgpu::Device& device)
+DumpDeviceLimits(const wgpu::Device& device)
 {
     wgpu::Limits limits;
     device.GetLimits(&limits);
@@ -1288,5 +1323,141 @@ DumpWebgpuLimits(const wgpu::Device& device)
     MLG_DEBUG("  maxStorageBuffersPerShaderStage: {}", limits.maxStorageBuffersPerShaderStage);
     MLG_DEBUG("  maxStorageTexturesPerShaderStage: {}", limits.maxStorageTexturesPerShaderStage);
     MLG_DEBUG("  maxUniformBuffersPerShaderStage: {}", limits.maxUniformBuffersPerShaderStage);
+}
+
+[[nodiscard]]
+constexpr std::string_view
+GetFeatureNameString(wgpu::FeatureName feature) noexcept
+{
+#define FEATURE_CASE(name)                                                                         \
+    case wgpu::FeatureName::name:                                                                  \
+        return #name
+
+    switch(feature)
+    {
+        FEATURE_CASE(CoreFeaturesAndLimits);
+        FEATURE_CASE(DepthClipControl);
+        FEATURE_CASE(Depth32FloatStencil8);
+        FEATURE_CASE(TextureCompressionBC);
+        FEATURE_CASE(TextureCompressionBCSliced3D);
+        FEATURE_CASE(TextureCompressionETC2);
+        FEATURE_CASE(TextureCompressionASTC);
+        FEATURE_CASE(TextureCompressionASTCSliced3D);
+        FEATURE_CASE(TimestampQuery);
+        FEATURE_CASE(IndirectFirstInstance);
+        FEATURE_CASE(ShaderF16);
+        FEATURE_CASE(RG11B10UfloatRenderable);
+        FEATURE_CASE(BGRA8UnormStorage);
+        FEATURE_CASE(Float32Filterable);
+        FEATURE_CASE(Float32Blendable);
+        FEATURE_CASE(ClipDistances);
+        FEATURE_CASE(DualSourceBlending);
+        FEATURE_CASE(Subgroups);
+        FEATURE_CASE(TextureFormatsTier1);
+        FEATURE_CASE(TextureFormatsTier2);
+        FEATURE_CASE(PrimitiveIndex);
+        FEATURE_CASE(TextureComponentSwizzle);
+        FEATURE_CASE(DawnInternalUsages);
+        FEATURE_CASE(DawnMultiPlanarFormats);
+        FEATURE_CASE(DawnNative);
+        FEATURE_CASE(ChromiumExperimentalTimestampQueryInsidePasses);
+        FEATURE_CASE(ImplicitDeviceSynchronization);
+        FEATURE_CASE(TransientAttachments);
+        FEATURE_CASE(MSAARenderToSingleSampled);
+        FEATURE_CASE(D3D11MultithreadProtected);
+        FEATURE_CASE(ANGLETextureSharing);
+        FEATURE_CASE(PixelLocalStorageCoherent);
+        FEATURE_CASE(PixelLocalStorageNonCoherent);
+        FEATURE_CASE(Unorm16TextureFormats);
+        FEATURE_CASE(MultiPlanarFormatExtendedUsages);
+        FEATURE_CASE(MultiPlanarFormatP010);
+        FEATURE_CASE(HostMappedPointer);
+        FEATURE_CASE(MultiPlanarRenderTargets);
+        FEATURE_CASE(MultiPlanarFormatNv12a);
+        FEATURE_CASE(FramebufferFetch);
+        FEATURE_CASE(BufferMapExtendedUsages);
+        FEATURE_CASE(AdapterPropertiesMemoryHeaps);
+        FEATURE_CASE(AdapterPropertiesD3D);
+        FEATURE_CASE(AdapterPropertiesVk);
+        FEATURE_CASE(DawnFormatCapabilities);
+        FEATURE_CASE(DawnDrmFormatCapabilities);
+        FEATURE_CASE(MultiPlanarFormatNv16);
+        FEATURE_CASE(MultiPlanarFormatNv24);
+        FEATURE_CASE(MultiPlanarFormatP210);
+        FEATURE_CASE(MultiPlanarFormatP410);
+        FEATURE_CASE(SharedTextureMemoryVkDedicatedAllocation);
+        FEATURE_CASE(SharedTextureMemoryAHardwareBuffer);
+        FEATURE_CASE(SharedTextureMemoryDmaBuf);
+        FEATURE_CASE(SharedTextureMemoryOpaqueFD);
+        FEATURE_CASE(SharedTextureMemoryZirconHandle);
+        FEATURE_CASE(SharedTextureMemoryDXGISharedHandle);
+        FEATURE_CASE(SharedTextureMemoryD3D11Texture2D);
+        FEATURE_CASE(SharedTextureMemoryIOSurface);
+        FEATURE_CASE(SharedTextureMemoryEGLImage);
+        FEATURE_CASE(SharedFenceVkSemaphoreOpaqueFD);
+        FEATURE_CASE(SharedFenceSyncFD);
+        FEATURE_CASE(SharedFenceVkSemaphoreZirconHandle);
+        FEATURE_CASE(SharedFenceDXGISharedHandle);
+        FEATURE_CASE(SharedFenceMTLSharedEvent);
+        FEATURE_CASE(SharedBufferMemoryD3D12Resource);
+        FEATURE_CASE(StaticSamplers);
+        FEATURE_CASE(YCbCrVulkanSamplers);
+        FEATURE_CASE(ShaderModuleCompilationOptions);
+        FEATURE_CASE(DawnLoadResolveTexture);
+        FEATURE_CASE(DawnPartialLoadResolveTexture);
+        FEATURE_CASE(MultiDrawIndirect);
+        FEATURE_CASE(DawnTexelCopyBufferRowAlignment);
+        FEATURE_CASE(FlexibleTextureViews);
+        FEATURE_CASE(ChromiumExperimentalSubgroupMatrix);
+        FEATURE_CASE(SharedFenceEGLSync);
+        FEATURE_CASE(DawnDeviceAllocatorControl);
+        FEATURE_CASE(AdapterPropertiesWGPU);
+        FEATURE_CASE(SharedBufferMemoryD3D12SharedMemoryFileMappingHandle);
+        FEATURE_CASE(SharedTextureMemoryD3D12Resource);
+        FEATURE_CASE(ChromiumExperimentalSamplingResourceTable);
+        FEATURE_CASE(ChromiumExperimentalSubgroupSizeControl);
+        FEATURE_CASE(AtomicVec2uMinMax);
+        FEATURE_CASE(Unorm16FormatsForExternalTexture);
+        FEATURE_CASE(OpaqueYCbCrAndroidForExternalTexture);
+        FEATURE_CASE(Unorm16Filterable);
+        FEATURE_CASE(RenderPassRenderArea);
+        FEATURE_CASE(AdapterPropertiesDrm);
+    }
+
+#undef FEATURE_CASE
+
+    return "Unknown";
+}
+
+void
+DumpAdapterFeatures(const wgpu::Adapter& adapter)
+{
+    wgpu::SupportedFeatures features{};
+    adapter.GetFeatures(&features);
+
+    const std::span<const wgpu::FeatureName> featureSpan(features.features, features.featureCount);
+    
+    MLG_DEBUG("Adapter features:");
+
+    for(const wgpu::FeatureName feature : featureSpan)
+    {
+        MLG_DEBUG("  {}", GetFeatureNameString(feature));
+    }
+}
+
+void
+DumpDeviceFeatures(const wgpu::Device& device)
+{
+    wgpu::SupportedFeatures features{};
+    device.GetFeatures(&features);
+
+    const std::span<const wgpu::FeatureName> featureSpan(features.features, features.featureCount);
+    
+    MLG_DEBUG("Device features:");
+
+    for(const wgpu::FeatureName feature : featureSpan)
+    {
+        MLG_DEBUG("  {}", GetFeatureNameString(feature));
+    }
 }
 } // namespace

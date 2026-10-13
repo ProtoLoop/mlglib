@@ -39,13 +39,13 @@ namespace SceneDefs
 constexpr size_t kMaxNameLen = 31;
 using NameString = InplaceString<kMaxNameLen>;
 
-using FilePathString = RelativeFilePath::StringStorageType;
+using RelativePathString = RelativeFilePath::StringStorageType;
 
 } // namespace SceneDefs
 
 struct MaterialDef final
 {
-    SceneDefs::FilePathString BaseTexturePath;
+    SceneDefs::RelativePathString BaseTexturePath;
     RgbaColorf Color{ 1, 1, 1, 1 };
     AlphaMode AlphaMode{ AlphaMode::Opaque };
     float Metalness{ 0.0f };

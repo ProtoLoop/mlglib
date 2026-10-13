@@ -214,7 +214,6 @@ Result<wgpu::Texture>
 TextureBuilder::Commit(const wgpu::CommandEncoder& commandEncoder)
 {
     MLG_CHECKV(m_StagingBuffer, "Staging buffer already committed");
-    MLG_CHECKV(m_StagingBuffer, "Staging buffer is not valid");
 
     auto textureResult = m_GpuHelper->CreateTexture(m_Width, m_Height, m_Path.GetStem());
     MLG_CHECK(textureResult);

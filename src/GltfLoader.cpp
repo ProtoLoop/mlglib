@@ -185,7 +185,7 @@ CollectMeshes(const cgltf_data* gltfData)
 Result<MaterialDef>
 CreateMaterialDef(const cgltf_material* gltfMaterial)
 {
-    SceneDefs::FilePathString baseTexturePath;
+    SceneDefs::RelativePathString baseTexturePath;
     RgbaColorf color = kDefaultColor;
     AlphaMode alphaMode = AlphaMode::Opaque;
     float metalness = 0;
