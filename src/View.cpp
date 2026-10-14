@@ -4,7 +4,6 @@
 
 #include "Camera.h"
 #include "Cullers.h"
-#include "FileFetcher.h"
 #include "GpuHelper.h"
 #include "PerfMetrics.h"
 #include "ResourceBundle.h"

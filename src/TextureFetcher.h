@@ -1,12 +1,12 @@
 #pragma once
 
+#include "Containers.h"
 #include "CoopTask.h"
 #include "FilePath.h"
 #include "Result.h"
 #include "TextureHelper.h"
 
 #include <cstddef>
-#include <deque>
 #include <optional>
 #include <vector>
 #include <webgpu/webgpu_cpp.h>
@@ -52,7 +52,7 @@ private:
     FileFetcher* m_FileFetcher{ nullptr };
     ThreadPool* m_ThreadPool{ nullptr };
     wgpu::CommandEncoder m_CommandEncoder{ nullptr };
-    std::deque<TextureFetchTask> m_Tasks;
+    BoundedVector<TextureFetchTask> m_Tasks;
     std::optional<CoopTaskBatch> m_TaskBatch;
     std::vector<wgpu::Texture> m_Textures;
     DirectoryPath m_ParentPath;

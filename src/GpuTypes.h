@@ -5,6 +5,7 @@
 #include "shaders/ShaderInterop.h"
 #include "Vertex.h"
 
+#include <string_view>
 #include <type_traits>
 #include <webgpu/webgpu_cpp.h>
 

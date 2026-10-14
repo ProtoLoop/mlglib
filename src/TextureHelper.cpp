@@ -109,18 +109,20 @@ GetTextureHeader(const std::span<const std::byte> buffer)
 /// TextureHeader
 
 Result<>
-TextureHeader::Validate(const std::span<const std::byte> buffer)
+TextureHeader::ValidateFile(const std::span<const std::byte> fileBuffer)
 {
-    const TextureHeader* header = GetTextureHeader(buffer);
+    const TextureHeader* header = GetTextureHeader(fileBuffer);
     MLG_CHECK(header, "Invalid texture header");
 
-    const size_t rowStride = static_cast<size_t>(header->Width) * GpuHelper::kNumTextureChannels;
-    const size_t expectedSize =
-        (rowStride * static_cast<size_t>(header->Height)) + sizeof(TextureHeader);
+    const TextureFormat& format = TextureFormat::GetFormat(header->FourCC);
+    MLG_CHECK(!format.IsUnknown(), "Unknown texture format: {}", header->FourCC.AsStringView());
 
-    MLG_CHECK(buffer.size() == expectedSize,
-        "Buffer size does not match expected size: {} != {}",
-        buffer.size(),
+    const size_t expectedSize =
+        format.GetSizeofData(header->Width, header->Height) + sizeof(TextureHeader);
+
+    MLG_CHECK(fileBuffer.size() == expectedSize,
+        "File buffer size does not match expected size: {} != {}",
+        fileBuffer.size(),
         expectedSize);
 
     return Result<>::Ok;
@@ -133,23 +135,29 @@ TextureBuilder::TextureBuilder(const GpuHelper& gpuHelper,
     wgpu::Buffer stagingBuffer,
     std::span<std::byte> mappedMemory,
     const uint32_t width,
-    const uint32_t height)
+    const uint32_t height,
+    const TextureFormat& format)
     : m_GpuHelper(&gpuHelper),
       m_Path(path),
       m_StagingBuffer(std::move(stagingBuffer)),
       m_MappedMemory(mappedMemory),
       m_Width(width),
-      m_Height(height)
+      m_Height(height),
+      m_Format(format)
 {
 }
 
 Result<TextureBuilder>
-TextureBuilder::Create(
-    const GpuHelper& gpuHelper, const FilePath& path, const uint32_t width, const uint32_t height)
+TextureBuilder::Create(const GpuHelper& gpuHelper,
+    const FilePath& path,
+    const uint32_t width,
+    const uint32_t height,
+    const TextureFormat& format)
 {
     MLG_CHECK(ValidateDimensions(width, height));
 
-    auto stagingBuffer = gpuHelper.CreateStagingBuffer(width, height, path.GetStem());
+    auto stagingBuffer =
+        gpuHelper.CreateTextureStagingBuffer(width, height, format, path.GetStem());
     MLG_CHECK(stagingBuffer);
     MLG_CHECK(stagingBuffer->GetSize() > 0, "Staging buffer has zero size");
     MLG_CHECK(stagingBuffer->GetSize() <= std::numeric_limits<size_t>::max(),
@@ -161,12 +169,8 @@ TextureBuilder::Create(
     const std::span<std::byte> mappedSpan(static_cast<std::byte*>(mapped),
         static_cast<size_t>(stagingBuffer->GetSize()));
 
-    TextureBuilder texBuilder(gpuHelper,
-        path,
-        std::move(*stagingBuffer),
-        mappedSpan,
-        width,
-        height);
+    TextureBuilder
+        texBuilder(gpuHelper, path, std::move(*stagingBuffer), mappedSpan, width, height, format);
 
     return std::move(texBuilder);
 }
@@ -177,22 +181,21 @@ TextureBuilder::StagePixels(const std::span<const std::byte> srcBytes)
     MLG_CHECKV(!srcBytes.empty(), "Source byte span is empty");
     MLG_CHECKV(m_StagingBuffer, "Staging buffer is not valid - was Commit() already called?");
 
-    const size_t expectedSrcSize = static_cast<size_t>(m_Width)
-        * static_cast<size_t>(m_Height)
-        * GpuHelper::kNumTextureChannels;
+    const size_t expectedSize = m_Format.GetSizeofData(m_Width, m_Height);
 
-    MLG_CHECKV(srcBytes.size() == expectedSrcSize,
+    MLG_CHECK(expectedSize == srcBytes.size(),
         "Source byte size does not match expected size: {} != {}",
         srcBytes.size(),
-        expectedSrcSize);
+        expectedSize);
 
     MLG_CHECKV(srcBytes.size() <= m_MappedMemory.size(),
         "Source byte size exceeds mapped memory size: {} > {}",
         srcBytes.size(),
         m_MappedMemory.size());
 
-    const size_t srcRowStride = static_cast<size_t>(m_Width) * GpuHelper::kNumTextureChannels;
-    const size_t dstRowStride = GpuHelper::GetTextureAlignedRowStride(static_cast<size_t>(m_Width));
+    const size_t srcRowStride = m_Format.GetBytesPerRow(m_Width);
+    const size_t dstRowStride =
+        m_Format.GetAlignedBytesPerRow(m_Width, GpuHelper::kTextureAlignment);
 
     if(dstRowStride == srcRowStride)
     {
@@ -201,8 +204,9 @@ TextureBuilder::StagePixels(const std::span<const std::byte> srcBytes)
     else
     {
         size_t dstOffset = 0, srcOffset = 0;
+        const size_t numRows = m_Format.GetBlockRowCount(m_Height);
 
-        for(uint32_t y = 0; y < m_Height; ++y, dstOffset += dstRowStride, srcOffset += srcRowStride)
+        for(uint32_t y = 0; y < numRows; ++y, dstOffset += dstRowStride, srcOffset += srcRowStride)
         {
             ::memcpy(&m_MappedMemory[dstOffset], &srcBytes[srcOffset], srcRowStride);
         }
@@ -215,10 +219,10 @@ TextureBuilder::Commit(const wgpu::CommandEncoder& commandEncoder)
 {
     MLG_CHECKV(m_StagingBuffer, "Staging buffer already committed");
 
-    auto textureResult = m_GpuHelper->CreateTexture(m_Width, m_Height, m_Path.GetStem());
+    auto textureResult = m_GpuHelper->CreateTexture(m_Width, m_Height, m_Format, m_Path.GetStem());
     MLG_CHECK(textureResult);
 
-    MLG_CHECK(textureResult->GetFormat() == GpuHelper::kTextureFormat,
+    MLG_CHECK(textureResult->GetFormat() == m_Format.WgpuFormat,
         "GPU texture format does not match expected format");
 
     MLG_DEFER
@@ -229,7 +233,8 @@ TextureBuilder::Commit(const wgpu::CommandEncoder& commandEncoder)
         m_Height = 0;
     };
 
-    MLG_CHECK(m_GpuHelper->CommitStagingBuffer(*textureResult, m_StagingBuffer, commandEncoder),
+    MLG_CHECK(
+        m_GpuHelper->CommitTextureStagingBuffer(*textureResult, m_StagingBuffer, commandEncoder),
         "Failed to commit staging buffer");
 
     return *textureResult;
@@ -247,7 +252,7 @@ TextureDecodeTask::TextureDecodeTask(const GpuHelper& gpuHelper,
     : m_GpuHelper(&gpuHelper),
       m_ThreadPool(&threadPool),
       m_Path(path),
-      m_TexBytes(std::move(rawData)),
+      m_FileBytes(std::move(rawData)),
       m_CommandEncoder(std::move(commandEncoder))
 {
 }
@@ -335,7 +340,7 @@ TextureDecodeTask::BeginDecode()
 {
     MLG_DEBUG("Beginning texture decode...");
 
-    if(CheckHeaderMagic(m_TexBytes) && CheckHeaderVersion(m_TexBytes))
+    if(CheckHeaderMagic(m_FileBytes) && CheckHeaderVersion(m_FileBytes))
     {
         MLG_CHECK(BeginDecodeMlg(), "Failed to begin mlg decode");
     }
@@ -352,18 +357,23 @@ TextureDecodeTask::BeginDecodeMlg()
 {
     MLG_DEBUG("Begin decoding mlg texture...");
 
-    MLG_CHECK(TextureHeader::Validate(m_TexBytes));
+    MLG_CHECK(TextureHeader::ValidateFile(m_FileBytes));
 
-    const TextureHeader* header = TextureHelper::GetTextureHeader(m_TexBytes);
+    const TextureHeader* header = TextureHelper::GetTextureHeader(m_FileBytes);
     MLG_CHECK(header, "Failed to get texture header");
 
-    MLG_DEBUG("Image info - {} x {} x {}",
+    MLG_DEBUG("Image info - {} x {} - {}",
         header->Width,
         header->Height,
-        GpuHelper::kNumTextureChannels);
+        header->FourCC.AsStringView());
 
-    auto builderResult =
-        TextureHelper::TextureBuilder::Create(*m_GpuHelper, m_Path, header->Width, header->Height);
+    const TextureFormat& format = TextureFormat::GetFormat(header->FourCC);
+
+    auto builderResult = TextureHelper::TextureBuilder::Create(*m_GpuHelper,
+        m_Path,
+        header->Width,
+        header->Height,
+        format);
     MLG_CHECK(builderResult);
     m_TextureBuilder = std::move(*builderResult);
 
@@ -378,18 +388,18 @@ TextureDecodeTask::BeginDecodeStb()
     MLG_DEBUG("Begin decoding stb texture...");
 
     // stb takes image size as an int.  Make sure we don't overflow.
-    MLG_CHECKV(m_TexBytes.size() <= std::numeric_limits<int>::max(),
+    MLG_CHECKV(m_FileBytes.size() <= std::numeric_limits<int>::max(),
         "Texture size exceeds maximum size for stb_image: {} > {}",
-        m_TexBytes.size(),
+        m_FileBytes.size(),
         std::numeric_limits<int>::max());
 
     int width = 0, height = 0, numChannels = 0;
 
-    const void* p = m_TexBytes.data();
+    const void* p = m_FileBytes.data();
     const stbi_uc* texBytes = static_cast<const stbi_uc*>(p);
 
     if(!stbi_info_from_memory(texBytes,
-           static_cast<int>(m_TexBytes.size()),
+           static_cast<int>(m_FileBytes.size()),
            &width,
            &height,
            &numChannels))
@@ -403,8 +413,11 @@ TextureDecodeTask::BeginDecodeStb()
     const uint32_t uWidth = static_cast<uint32_t>(width);
     const uint32_t uHeight = static_cast<uint32_t>(height);
 
-    auto builderResult =
-        TextureHelper::TextureBuilder::Create(*m_GpuHelper, m_Path, uWidth, uHeight);
+    auto builderResult = TextureHelper::TextureBuilder::Create(*m_GpuHelper,
+        m_Path,
+        uWidth,
+        uHeight,
+        TextureFormat::GetRGBA());
     MLG_CHECK(builderResult);
     m_TextureBuilder = std::move(*builderResult);
 
@@ -423,10 +436,10 @@ TextureDecodeTask::DecodeMlg()
     MLG_DEFER
     {
         // Free the buffer to reclaim memory.
-        std::vector<std::byte>().swap(m_TexBytes);
+        std::vector<std::byte>().swap(m_FileBytes);
     };
 
-    const std::span srcSpan = std::span(m_TexBytes).subspan(sizeof(TextureHeader));
+    const std::span srcSpan = std::span(m_FileBytes).subspan(sizeof(TextureHeader));
 
     MLG_CHECK(m_TextureBuilder->StagePixels(srcSpan));
 
@@ -443,16 +456,16 @@ TextureDecodeTask::DecodeStb()
     MLG_DEFER
     {
         // Free the buffer to reclaim memory.
-        std::vector<std::byte>().swap(m_TexBytes);
+        std::vector<std::byte>().swap(m_FileBytes);
     };
 
     int imgWidth = 0, imgHeight = 0, imgNumChannels = 0;
 
-    const void* p = m_TexBytes.data();
+    const void* p = m_FileBytes.data();
     const stbi_uc* texBytes = static_cast<const stbi_uc*>(p);
 
     stbi_uc* data = stbi_load_from_memory(texBytes,
-        static_cast<int>(m_TexBytes.size()),
+        static_cast<int>(m_FileBytes.size()),
         &imgWidth,
         &imgHeight,
         &imgNumChannels,
@@ -462,7 +475,7 @@ TextureDecodeTask::DecodeStb()
 
     // Eager reclaiming of memory.  The deferred recalaim from above will
     // still run but it will be a no-op.
-    std::vector<std::byte>().swap(m_TexBytes);
+    std::vector<std::byte>().swap(m_FileBytes);
 
     MLG_DEFER
     {
@@ -486,8 +499,7 @@ TextureDecodeTask::DecodeStb()
         * static_cast<size_t>(imgHeight)
         * GpuHelper::kNumTextureChannels;
 
-    p = static_cast<const void*>(data);
-    const std::span<const std::byte> srcSpan(static_cast<const std::byte*>(p), sizeofSrcData);
+    const std::span<const std::byte> srcSpan = std::as_bytes(std::span(data, sizeofSrcData));
 
     MLG_CHECK(m_TextureBuilder->StagePixels(srcSpan));
 
@@ -549,6 +561,8 @@ TextureFetchTask::OnStart()
     // If loading fails then we use the default texture.
     m_Texture = m_GpuHelper->GetDefaultTexture();
     MLG_CHECK(m_Texture, "Failed to get default texture");
+
+    MLG_INFO("Fetching texture: {}...", m_Path);
 
     auto fetchRequestId = m_FileFetcher->Fetch(m_Path);
     MLG_CHECK(fetchRequestId);

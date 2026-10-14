@@ -300,10 +300,31 @@ target_compile_definitions(imgui PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
 # --- box3d
 add_subdirectory(thirdparty/box3d EXCLUDE_FROM_ALL SYSTEM)
 
-# --- libktx
-set(LIBKTX_FEATURE_GL_UPLOAD OFF CACHE BOOL "Enable OpenGL upload" FORCE)
-set(LIBKTX_FEATURE_VK_UPLOAD OFF CACHE BOOL "Enable Vulkan upload" FORCE)
-add_subdirectory(thirdparty/KTX-Software/lib EXCLUDE_FROM_ALL SYSTEM)
+# --- bc7enc_rdo
+add_library(bc7enc_rdo STATIC EXCLUDE_FROM_ALL
+  thirdparty/bc7enc_rdo/bc7enc.cpp
+  thirdparty/bc7enc_rdo/bc7decomp.cpp
+  thirdparty/bc7enc_rdo/bc7decomp_ref.cpp
+  thirdparty/bc7enc_rdo/rgbcx.cpp
+  thirdparty/bc7enc_rdo/rdo_bc_encoder.cpp
+  thirdparty/bc7enc_rdo/ert.cpp
+  thirdparty/bc7enc_rdo/utils.cpp
+  thirdparty/bc7enc_rdo/lodepng.cpp
+)
+
+target_include_directories(bc7enc_rdo SYSTEM PUBLIC
+  thirdparty/bc7enc_rdo
+)
+
+target_compile_definitions(bc7enc_rdo PUBLIC SUPPORT_BC7E=0)
+
+target_compile_options(bc7enc_rdo PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fno-strict-aliasing>
+)
+
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+  target_link_libraries(bc7enc_rdo PRIVATE m)
+endif()
 
 # ============================================================
 # Enable clang-tidy only after all thirdparty targets exist
@@ -422,6 +443,7 @@ set(SSG_HEADERS
   src/Shell.h
   src/System.h
   src/TextureFetcher.h
+  src/TextureFormat.h
   src/TextureHelper.h
   src/ThreadPool.h
   src/Timer.h
@@ -503,7 +525,7 @@ endfunction()
 # Tool: Cook
 # ============================================================
 add_tool_executable(Cook tools/Cook/Cook.cpp)
-target_link_libraries(Cook PRIVATE ktx)
+target_link_libraries(Cook PRIVATE bc7enc_rdo)
 target_include_directories(Cook SYSTEM PRIVATE thirdparty/stb)
 
 # ============================================================

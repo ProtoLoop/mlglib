@@ -1,9 +1,10 @@
+#include <limits>
 #define MLG_LOGGER_NAME "WGPU"
 
 #include "GpuHelper.h"
 
-#include "Defer.h"
 #include "Containers.h"
+#include "Defer.h"
 
 #include <atomic>
 #include <SDL3/SDL_init.h>
@@ -34,7 +35,7 @@ constexpr std::pair<wgpu::FeatureName, const char*> kDesiredFeatures[] = //
         { wgpu::FeatureName::TextureCompressionETC2, "TextureCompressionETC2" },
         { wgpu::FeatureName::TextureCompressionASTC, "TextureCompressionASTC" },
     };
-    
+
 const char*
 GetPresentModeString(const wgpu::PresentMode presentMode)
 {
@@ -326,14 +327,18 @@ CreateDefaultTexture(GpuHelper& gpuHelper)
     constexpr size_t kDefaultTextureWidth = 128;
     constexpr size_t kDefaultTextureHeight = 128;
     constexpr RgbaColoru8 kDefaultTextureColor{ "#FF00FFFF"_rgba }; // Magenta
+    constexpr TextureFormat kDefaultTextureFormat = TextureFormat::GetRGBA();
 
-    auto texture =
-        gpuHelper.CreateTexture(kDefaultTextureWidth, kDefaultTextureHeight, "DefaultTexture");
+    auto texture = gpuHelper.CreateTexture(kDefaultTextureWidth,
+        kDefaultTextureHeight,
+        kDefaultTextureFormat,
+        "DefaultTexture");
 
     MLG_CHECK(texture);
 
-    auto stagingBuffer = gpuHelper.CreateStagingBuffer(texture->GetWidth(),
+    auto stagingBuffer = gpuHelper.CreateTextureStagingBuffer(texture->GetWidth(),
         texture->GetHeight(),
+        kDefaultTextureFormat,
         "DefaultTextureStagingBuffer");
     MLG_CHECK(stagingBuffer);
 
@@ -343,11 +348,12 @@ CreateDefaultTexture(GpuHelper& gpuHelper)
     const std::span<uint8_t> mappedSpan(static_cast<uint8_t*>(mapped),
         static_cast<size_t>(stagingBuffer->GetSize()));
 
-    const size_t rowStride = GpuHelper::GetTextureAlignedRowStride(kDefaultTextureWidth);
+    const size_t dstRowStride = kDefaultTextureFormat.GetAlignedBytesPerRow(kDefaultTextureWidth,
+        GpuHelper::kTextureAlignment);
 
     for(size_t y = 0; y < kDefaultTextureHeight; ++y)
     {
-        size_t offset = y * rowStride;
+        size_t offset = y * dstRowStride;
 
         for(size_t x = 0; x < kDefaultTextureWidth; ++x, offset += 4)
         {
@@ -359,7 +365,7 @@ CreateDefaultTexture(GpuHelper& gpuHelper)
         }
     }
 
-    MLG_CHECK(gpuHelper.CommitStagingBuffer(*texture, *stagingBuffer));
+    MLG_CHECK(gpuHelper.CommitTextureStagingBuffer(*texture, *stagingBuffer));
 
     return *texture;
 }
@@ -461,8 +467,7 @@ GpuHelper::CreateTask::Take()
 
     m_Consumed = true;
 
-    std::unique_ptr<GpuHelper> gpuHelper(new GpuHelper(
-        m_Window,
+    std::unique_ptr<GpuHelper> gpuHelper(new GpuHelper(m_Window,
         m_MetalView,
         m_Instance,
         m_Adapter,
@@ -887,18 +892,20 @@ GpuHelper::GetSwapChainFormat() const
     return m_SurfaceFormat;
 }
 bool
-GpuHelper::HasTextureCompression(TextureCompression compression) const
+GpuHelper::HasTextureFormat(TextureFormat::FormatIdentifier formatId) const
 {
-    switch(compression)
+    switch(formatId)
     {
-    case TextureCompression::BC:
-        return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionBC);
-    case TextureCompression::ETC2:
-        return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionETC2);
-    case TextureCompression::ASTC:
-        return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionASTC);
-    default:
-        return false;
+        case TextureFormat::FormatIdentifier::RGBA:
+            return true;
+        case TextureFormat::FormatIdentifier::BC7:
+            return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionBC);
+        /*case TextureFormat::FormatId::ETC2:
+            return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionETC2);
+        case TextureFormat::FormatId::ASTC:
+            return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionASTC);*/
+        case TextureFormat::FormatIdentifier::Unknown:
+            return false;
     }
 }
 
@@ -935,9 +942,24 @@ GpuHelper::Resize(const uint32_t width, const uint32_t height)
 }
 
 Result<wgpu::Texture>
-GpuHelper::CreateTexture(
-    const unsigned width, const unsigned height, const std::string_view& name) const
+GpuHelper::CreateTexture(const uint32_t width,
+    const uint32_t height,
+    const TextureFormat& format,
+    const std::string_view& name) const
 {
+    MLG_CHECK(!format.IsUnknown(), "Unknown texture compression type: {}", format.GetName());
+
+    MLG_CHECK(HasTextureFormat(format.FormatId),
+        "Texture format not supported: {}",
+        format.GetName());
+
+    MLG_CHECK(width % format.BlockTexelWidth == 0,
+        "Width must be a multiple of the block texel width: {}",
+        format.BlockTexelWidth);
+    MLG_CHECK(height % format.BlockTexelWidth == 0,
+        "Height must be a multiple of the block texel width: {}",
+        format.BlockTexelWidth);
+
     const wgpu::TextureDescriptor desc //
         {
             .label = name,
@@ -949,7 +971,7 @@ GpuHelper::CreateTexture(
                 .height = height,
                 .depthOrArrayLayers = 1,
             },
-            .format = kTextureFormat,
+            .format = format.WgpuFormat,
             .mipLevelCount = 1,
             .sampleCount = 1,
         };
@@ -962,7 +984,7 @@ GpuHelper::CreateTexture(
 
 Result<GpuRenderTarget>
 GpuHelper::CreateRenderTarget(
-    const unsigned width, const unsigned height, const std::string_view& name) const
+    const uint32_t width, const uint32_t height, const std::string_view& name) const
 {
     const wgpu::TextureDescriptor desc //
         {
@@ -989,7 +1011,7 @@ GpuHelper::CreateRenderTarget(
 
 Result<GpuDepthTarget>
 GpuHelper::CreateDepthBuffer(
-    const unsigned width, const unsigned height, const std::string_view& name) const
+    const uint32_t width, const uint32_t height, const std::string_view& name) const
 {
     const wgpu::TextureDescriptor desc //
         {
@@ -1021,11 +1043,25 @@ GpuHelper::CreateDepthBuffer(
 // is slow compared to using a staging buffer and CopyBufferToTexture.
 
 Result<wgpu::Buffer>
-GpuHelper::CreateStagingBuffer(
-    const uint32_t width, const uint32_t height, const std::string_view& name) const
+GpuHelper::CreateTextureStagingBuffer(const uint32_t width,
+    const uint32_t height,
+    const TextureFormat& format,
+    const std::string_view& name) const
 {
-    const size_t rowStride = GetTextureAlignedRowStride(width);
-    const size_t sizeofBuffer = rowStride * height;
+    MLG_CHECK(!format.IsUnknown(), "Unknown texture compression type: {}", format.GetName());
+
+    MLG_CHECK(HasTextureFormat(format.FormatId),
+        "Texture format not supported: {}",
+        format.GetName());
+
+    MLG_CHECK(width % format.BlockTexelWidth == 0,
+        "Width must be a multiple of the block texel width: {}",
+        format.BlockTexelWidth);
+    MLG_CHECK(height % format.BlockTexelWidth == 0,
+        "Height must be a multiple of the block texel width: {}",
+        format.BlockTexelWidth);
+
+    const size_t sizeofBuffer = format.GetAlignedSizeofData(width, height, 256);
     const wgpu::BufferUsage usage = wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc;
 
     auto buffer = CreateGpuBuffer(usage, sizeofBuffer, BufferMappedState::Mapped, name);
@@ -1035,11 +1071,11 @@ GpuHelper::CreateStagingBuffer(
 }
 
 Result<>
-GpuHelper::CommitStagingBuffer(wgpu::Texture texture, wgpu::Buffer stagingBuffer) const
+GpuHelper::CommitTextureStagingBuffer(wgpu::Texture texture, wgpu::Buffer stagingBuffer) const
 {
     const wgpu::CommandEncoder cmdEncoder = GetDevice().CreateCommandEncoder();
 
-    MLG_CHECK(CommitStagingBuffer(texture, stagingBuffer, cmdEncoder));
+    MLG_CHECK(CommitTextureStagingBuffer(texture, stagingBuffer, cmdEncoder));
 
     const wgpu::CommandBuffer commandBuffer = cmdEncoder.Finish();
 
@@ -1049,10 +1085,13 @@ GpuHelper::CommitStagingBuffer(wgpu::Texture texture, wgpu::Buffer stagingBuffer
 }
 
 Result<>
-GpuHelper::CommitStagingBuffer(
+GpuHelper::CommitTextureStagingBuffer(
     wgpu::Texture texture, wgpu::Buffer stagingBuffer, wgpu::CommandEncoder cmdEncoder)
 {
     stagingBuffer.Unmap();
+
+    const TextureFormat format = TextureFormat::GetFormat(texture.GetFormat());
+    MLG_CHECKV(!format.IsUnknown(), "Unknown texture format: {}", format.GetName());
 
     const wgpu::TexelCopyBufferInfo copySrc = //
         {
@@ -1060,7 +1099,7 @@ GpuHelper::CommitStagingBuffer(
             {
                 .offset = 0,
                 .bytesPerRow = static_cast<uint32_t>(
-                    GpuHelper::GetTextureAlignedRowStride(texture.GetWidth())),
+                    format.GetAlignedBytesPerRow(texture.GetWidth(), GpuHelper::kTextureAlignment)),
                 .rowsPerImage = texture.GetHeight(),
             },
             .buffer = stagingBuffer,
@@ -1108,16 +1147,6 @@ GpuHelper::CreateIndexBuffer(const size_t count, const std::string_view& name) c
     MLG_CHECK(buffer, "Failed to create index buffer");
 
     return GpuIndexBuffer::Create(GetDevice(), *buffer);
-}
-
-// Texture staging buffer rows must be a multiple of 256 bytes.
-size_t
-GpuHelper::GetTextureAlignedRowStride(const size_t textureWidth)
-{
-    const size_t rowNumBytes = textureWidth * GpuHelper::kNumTextureChannels;
-    const size_t alignedRowStride =
-        (rowNumBytes + 255uz) & ~255uz; // Round up to the next multiple of 256
-    return alignedRowStride;
 }
 
 // private:
@@ -1436,7 +1465,7 @@ DumpAdapterFeatures(const wgpu::Adapter& adapter)
     adapter.GetFeatures(&features);
 
     const std::span<const wgpu::FeatureName> featureSpan(features.features, features.featureCount);
-    
+
     MLG_DEBUG("Adapter features:");
 
     for(const wgpu::FeatureName feature : featureSpan)
@@ -1452,7 +1481,7 @@ DumpDeviceFeatures(const wgpu::Device& device)
     device.GetFeatures(&features);
 
     const std::span<const wgpu::FeatureName> featureSpan(features.features, features.featureCount);
-    
+
     MLG_DEBUG("Device features:");
 
     for(const wgpu::FeatureName feature : featureSpan)

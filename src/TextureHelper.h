@@ -3,8 +3,10 @@
 #include "CoopTask.h"
 #include "FileFetcher.h"
 #include "FilePath.h"
+#include "TextureFormat.h"
 
 #include <atomic>
+#include <string_view>
 #include <webgpu/webgpu_cpp.h>
 
 class GpuHelper;
@@ -18,35 +20,47 @@ class CommandEncoder;
 namespace TextureHelper
 {
 
+struct Fourcc
+{
+    const char Value[4]{}; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
+
+    std::string_view AsStringView() const
+    {
+        return std::string_view(&Value[0], std::size(Value));
+    }
+
+    friend bool operator==(const Fourcc& lhs, const Fourcc& rhs) = default;
+};
+
+consteval Fourcc
+MakeFourcc(const char a, const char b, const char c, const char d)
+{
+    // NOLINTBEGIN(readability-magic-numbers)
+    return Fourcc{ a, b, c, d };
+    // NOLINTEND(readability-magic-numbers)
+}
+
 /// Header for a cooked texture file.
 struct TextureHeader
 {
-    static constexpr uint32_t kMagicRaw0 = (static_cast<uint32_t>('M') << 24)
-        | (static_cast<uint32_t>('L') << 16)
-        | (static_cast<uint32_t>('G') << 8)
-        | (static_cast<uint32_t>(' '));
-
-    static constexpr uint32_t kMagicRaw1 = (static_cast<uint32_t>('T') << 24)
-        | (static_cast<uint32_t>('E') << 16)
-        | (static_cast<uint32_t>('X') << 8)
-        | (static_cast<uint32_t>(' '));
-
-    static constexpr uint32_t kMagic0 =
-        std::endian::native == std::endian::big ? kMagicRaw0 : std::byteswap(kMagicRaw0);
-    static constexpr uint32_t kMagic1 =
-        std::endian::native == std::endian::big ? kMagicRaw1 : std::byteswap(kMagicRaw1);
+    static constexpr Fourcc kMagic0 = MakeFourcc('M', 'L', 'G', ' ');
+    static constexpr Fourcc kMagic1 = MakeFourcc('T', 'E', 'X', ' ');
     static constexpr uint32_t kVersion = 1;
 
     static constexpr uint32_t kMaxImageWidth = 4096;
     static constexpr uint32_t kMaxImageHeight = 4096;
 
-    static Result<> Validate(const std::span<const std::byte> buffer);
+    static Result<> ValidateFile(const std::span<const std::byte> fileBuffer);
 
-    const uint32_t Magic0{ kMagic0 };   // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
-    const uint32_t Magic1{ kMagic1 };   // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
+    static_assert(sizeof(Fourcc) == 4, "Fourcc must be 4 bytes in size");
+    static_assert(sizeof(TextureFormat::FourCC) == 4, "EncodingFourcc must be 4 bytes in size");
+
+    Fourcc Magic0{ kMagic0 };
+    Fourcc Magic1{ kMagic1 };
     const uint32_t Version{ kVersion }; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
     uint32_t Width{ 0 };
     uint32_t Height{ 0 };
+    TextureFormat::FourCC FourCC;
 };
 
 /// Checks if the buffer contains the correct magic numbers for a texture header.
@@ -56,8 +70,9 @@ bool CheckHeaderMagic(const std::span<const std::byte> buffer);
 bool CheckHeaderVersion(const std::span<const std::byte> buffer);
 
 /// Retrieves the texture header from the buffer.
-/// Returns a pointer to the texture header if the buffer contains a valid header, or nullptr otherwise.
-/// A valid header must have the correct magic numbers and version, and valid dimensions.
+/// Returns a pointer to the texture header if the buffer contains a valid header, or nullptr
+/// otherwise. A valid header must have the correct magic numbers and version, and valid
+/// dimensions.
 const TextureHeader* GetTextureHeader(const std::span<const std::byte> buffer);
 
 /// Checks if the texture dimensions are within the allowed limits.
@@ -65,8 +80,8 @@ Result<> ValidateDimensions(const uint32_t width, const uint32_t height);
 
 /// Helper class for staging textures to the GPU.  Copying pixels (StagePixels()) to a staging
 /// buffer is separate from uploading (Commit()) the texture to the GPU.  This enables
-/// decoding/staging to occur in a background thread, while committing to the GPU can be done on the
-/// main thread.
+/// decoding/staging to occur in a background thread, while committing to the GPU can be done on
+/// the main thread.
 class TextureBuilder
 {
 public:
@@ -80,7 +95,8 @@ public:
     static Result<TextureBuilder> Create(const GpuHelper& gpuHelper,
         const FilePath& path,
         const uint32_t width,
-        const uint32_t height);
+        const uint32_t height,
+        const TextureFormat& format);
 
     uint32_t GetWidth() const { return m_Width; }
     uint32_t GetHeight() const { return m_Height; }
@@ -105,7 +121,8 @@ private:
         wgpu::Buffer stagingBuffer,
         std::span<std::byte> mappedMemory,
         const uint32_t width,
-        const uint32_t height);
+        const uint32_t height,
+        const TextureFormat& format);
 
     const GpuHelper* m_GpuHelper{ nullptr };
     FilePath m_Path;
@@ -113,6 +130,7 @@ private:
     std::span<std::byte> m_MappedMemory;
     uint32_t m_Width{ 0 };
     uint32_t m_Height{ 0 };
+    TextureFormat m_Format;
 };
 } // namespace TextureHelper
 
@@ -167,7 +185,7 @@ private:
     const GpuHelper* m_GpuHelper{ nullptr };
     ThreadPool* m_ThreadPool{ nullptr };
     FilePath m_Path;
-    std::vector<std::byte> m_TexBytes;
+    std::vector<std::byte> m_FileBytes; // Raw file data for the texture
     std::optional<TextureHelper::TextureBuilder> m_TextureBuilder;
     wgpu::Texture m_Texture{ nullptr };
     wgpu::CommandEncoder m_CommandEncoder{ nullptr };

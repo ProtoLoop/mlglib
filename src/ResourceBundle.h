@@ -311,7 +311,7 @@ public:
         const Header* header = GetHeader();
         return MLG_VERIFY(header, "Header is not initialized")
             ? GetSpan<ModelInstanceResource>(header->ModelInstancesOffset,
-                header->ModelInstanceCount)
+                  header->ModelInstanceCount)
             : std::span<const ModelInstanceResource>();
     }
 
@@ -436,10 +436,10 @@ private:
 class ResourceBundle::LoadTask : public ICoopTask<>
 {
     friend class ResourceBundle;
-public:
 
+public:
     LoadTask() = delete;
-    ~LoadTask() override = default;  // The base class will verify completion
+    ~LoadTask() override = default; // The base class will verify completion
     LoadTask(const LoadTask&) = delete;
     LoadTask& operator=(const LoadTask&) = delete;
     LoadTask(LoadTask&&) = delete;
@@ -450,7 +450,6 @@ public:
     Result<ResourceBundle> Take();
 
 private:
-
     Result<> OnStart() override;
 
     void OnUpdate() override;

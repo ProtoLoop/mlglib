@@ -2,6 +2,7 @@
 
 #include "CoopTask.h"
 #include "GpuTypes.h"
+#include "TextureFormat.h"
 #include "VecMath.h"
 
 #include <atomic>
@@ -21,12 +22,8 @@ public:
     static constexpr size_t kNumTextureChannels = 4;
     static constexpr wgpu::TextureFormat kDepthBufferFormat = wgpu::TextureFormat::Depth24Plus;
 
-    enum class TextureCompression
-    {
-        BC,
-        ETC2,
-        ASTC
-    };
+    /// The alignment requirement for texture data in bytes when uploading to the GPU.
+    static constexpr size_t kTextureAlignment = 256;
 
     /// A task that creates a GpuHelper instance asynchronously.
     class CreateTask;
@@ -45,7 +42,7 @@ public:
     Dimension2 GetScreenDimensions() const;
     Result<GpuRenderTarget> GetSwapChainTexture() const;
     wgpu::TextureFormat GetSwapChainFormat() const;
-    bool HasTextureCompression(TextureCompression compression) const;
+    bool HasTextureFormat(TextureFormat::FormatIdentifier formatId) const;
 
     /// Presents the current swap chain texture to the screen.
     Result<> Present() const;
@@ -54,26 +51,30 @@ public:
     Result<> Resize(const uint32_t width, const uint32_t height);
 
     /// Creates an empty texture with the given dimensions and name.
-    Result<wgpu::Texture> CreateTexture(
-        const unsigned width, const unsigned height, const std::string_view& name) const;
+    Result<wgpu::Texture> CreateTexture(const uint32_t width,
+        const uint32_t height,
+        const TextureFormat& format,
+        const std::string_view& name) const;
 
     /// Creates a render target with the given dimensions and name.
     Result<GpuRenderTarget> CreateRenderTarget(
-        const unsigned width, const unsigned height, const std::string_view& name) const;
+        const uint32_t width, const uint32_t height, const std::string_view& name) const;
 
     /// Creates a depth buffer with the given dimensions and name.
     Result<GpuDepthTarget> CreateDepthBuffer(
-        const unsigned width, const unsigned height, const std::string_view& name) const;
-
-    /// Creates a staging buffer for copying texture data to the GPU.
-    Result<wgpu::Buffer> CreateStagingBuffer(
         const uint32_t width, const uint32_t height, const std::string_view& name) const;
 
-    /// Commits the data in the staging buffer to texture memory on the GPU.
-    Result<> CommitStagingBuffer(wgpu::Texture texture, wgpu::Buffer stagingBuffer) const;
+    /// Creates a staging buffer for copying texture data to the GPU.
+    Result<wgpu::Buffer> CreateTextureStagingBuffer(const uint32_t width,
+        const uint32_t height,
+        const TextureFormat& format,
+        const std::string_view& name) const;
 
     /// Commits the data in the staging buffer to texture memory on the GPU.
-    static Result<> CommitStagingBuffer(
+    Result<> CommitTextureStagingBuffer(wgpu::Texture texture, wgpu::Buffer stagingBuffer) const;
+
+    /// Commits the data in the staging buffer to texture memory on the GPU.
+    static Result<> CommitTextureStagingBuffer(
         wgpu::Texture texture, wgpu::Buffer stagingBuffer, wgpu::CommandEncoder cmdEncoder);
 
     /// Creates a vertex buffer with capacity for the given number of vertices.
@@ -126,14 +127,7 @@ public:
         return T::Create(GetDevice(), *bufferResult);
     }
 
-    /// Returns the aligned row stride for a texture staging buffer.
-    /// Texture staging buffer rows must be a multiple of 256 bytes.
-    /// @param textureWidth The width of the texture in pixels.
-    /// @return The aligned row stride in bytes.
-    static size_t GetTextureAlignedRowStride(const size_t textureWidth);
-
 private:
-
     enum class BufferMappedState
     {
         Unmapped,

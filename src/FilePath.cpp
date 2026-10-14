@@ -50,8 +50,7 @@ HasValidComponents(const std::string_view path, const size_t maxLength)
 constexpr std::string_view
 GetParent(const std::string_view path) noexcept
 {
-    const std::size_t searchPos =
-        path.ends_with('/') ? path.size() - 2 : std::string_view::npos;
+    const std::size_t searchPos = path.ends_with('/') ? path.size() - 2 : std::string_view::npos;
     const std::size_t separator = path.find_last_of('/', searchPos);
     return separator == std::string_view::npos ? std::string_view{} : path.substr(0, separator);
 }
@@ -105,6 +104,14 @@ GetStem(std::string_view path) noexcept
 
     return fileName.substr(0, fileName.size() - extension.size());
 }
+
+constexpr std::string_view
+RemoveExtension(const std::string_view path) noexcept
+{
+    const std::string_view filename = GetFileName(path);
+    const std::string_view extension = GetExtension(filename);
+    return path.substr(0, path.size() - extension.size());
+}
 } // namespace
 
 /// RelativeFilePath
@@ -112,9 +119,30 @@ GetStem(std::string_view path) noexcept
 Result<RelativeFilePath>
 RelativeFilePath::Create(const std::string_view path)
 {
-    MLG_CHECKV(HasValidComponents(path, StringStorageType::kMaxLength), "Invalid file path: {}", path);
+    MLG_CHECKV(HasValidComponents(path, StringStorageType::kMaxLength),
+        "Invalid file path: {}",
+        path);
 
     return RelativeFilePath(StringStorageType(path));
+}
+
+Result<RelativeFilePath>
+RelativeFilePath::ReplaceExtension(const std::string_view newExtension) const
+{
+    const std::string_view noDotExtension =
+        newExtension.starts_with('.') ? newExtension.substr(1) : newExtension;
+    const std::string_view selfWithoutExtension = RemoveExtension(m_Value);
+
+    MLG_CHECK(selfWithoutExtension.size() + noDotExtension.size() + 1
+            <= StringStorageType::kMaxLength,
+        "Resulting file path is too long: {}.{}",
+        selfWithoutExtension,
+        noDotExtension);
+
+    const StringStorageType resultPath =
+        StringStorageType::Format("{}.{}", selfWithoutExtension, noDotExtension);
+
+    return RelativeFilePath::Create(resultPath);
 }
 
 /// DirectoryPath
@@ -134,7 +162,8 @@ DirectoryPath::Create(const std::string_view path)
         MLG_CHECKV(path.size() <= StringStorageType::kMaxLength,
             "Directory path is too long: {}",
             path);
-        MLG_CHECKV(HasValidComponents(path.substr(0, path.size() - 1), StringStorageType::kMaxLength),
+        MLG_CHECKV(
+            HasValidComponents(path.substr(0, path.size() - 1), StringStorageType::kMaxLength),
             "Invalid directory path: {}",
             path);
 

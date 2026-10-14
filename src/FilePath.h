@@ -34,6 +34,8 @@ public:
 
     size_t size() const noexcept { return m_Value.size(); }
 
+    Result<RelativeFilePath> ReplaceExtension(const std::string_view newExtension) const;
+
     friend bool operator==(const RelativeFilePath&, const RelativeFilePath&) = default;
 
     friend Result<FilePath> Join(const DirectoryPath& directory, const RelativeFilePath& file);

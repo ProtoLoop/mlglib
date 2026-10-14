@@ -17,14 +17,17 @@ flowchart TD
     F --> G[Runtime scene and GPU resources]
     H[PNG / JPG textures] --> I[Texture cooking]
     I --> J[Separate compressed texture files]
+    I --> L[Copies of original PNG / JPG files]
     F -->|Texture file references| K[Parallel texture loading]
     J --> K
+    L --> K
     K --> G
 ```
 
 Cooked textures stay in individual files so they can load in parallel. The
-bundle references those files. Their compressed format will allow direct
-loading, with image decoding and compression handled during cooking.
+bundle retains the original texture paths. At runtime, the loader selects a
+compressed variant when the GPU supports it. Compressed pixel data uploads
+without image decoding at runtime.
 
 ## Intermediate definitions
 
@@ -62,6 +65,14 @@ building it.
 glTF, or loads cooked resource bundles. [`Scene`](../../src/Scene.cpp) creates
 runtime nodes and physics, and [`View`](../../src/View.cpp) creates GPU resources.
 
-The Cook tool writes resource bundles and separate, uncompressed RGBA texture
-files. Runtime texture loading supports both cooked textures and PNG/JPG images.
-Compressed texture cooking and loading remain planned.
+The [Cook tool](../../tools/Cook/Cook.cpp) writes resource bundles and separate
+BC7 texture files with a `.bc7` extension. It also copies the original PNG/JPG
+files for devices without BC7 support.
+
+Before compression, the cooker resizes images whose dimensions are not multiples
+of four, rounding each dimension up to the next multiple. The cooked header
+records the resized dimensions.
+
+[TextureFetcher](../../src/TextureFetcher.cpp) selects the `.bc7` variant when
+the device supports BC7. Otherwise, it loads the original image, which is decoded
+at runtime.

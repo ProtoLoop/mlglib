@@ -15,6 +15,7 @@ TextureFetcher::TextureFetcher(const GpuHelper& gpuHelper,
     : m_GpuHelper(&gpuHelper),
       m_FileFetcher(&fileFetcher),
       m_ThreadPool(&threadPool),
+      m_Tasks(texturePaths.size()),
       m_ParentPath(parentPath),
       m_TexturePaths(std::move(texturePaths))
 {
@@ -59,8 +60,19 @@ TextureFetcher::OnStart()
     std::vector<ICoopTask*> taskBatch;
     taskBatch.reserve(m_TexturePaths.size());
 
-    for(const RelativeFilePath& texPath : m_TexturePaths)
+    for(RelativeFilePath texPath : m_TexturePaths)
     {
+        if(m_GpuHelper->HasTextureFormat(TextureFormat::FormatIdentifier::BC7))
+        {
+            const auto bc7PathResult =
+                texPath.ReplaceExtension(TextureFormat::GetBC7().Extension.AsStringView());
+            MLG_CHECK(bc7PathResult,
+                "Failed to replace extension for {}/{}",
+                m_ParentPath,
+                texPath);
+            texPath = *bc7PathResult;
+        }
+
         auto pathResult = m_ParentPath.Join(texPath);
         MLG_CHECK(pathResult, "Failed to construct full path for {}/{}", m_ParentPath, texPath);
 
