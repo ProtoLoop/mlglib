@@ -150,18 +150,18 @@ LoadLevel(System& system)
             .NodeDefs = std::move(nodeDefs),
         };
 
+    auto createTaskResult = Level::CreateFromSceneDef(system, std::move(sceneDef));
+    MLG_CHECK(createTaskResult, "Failed to create level from scene definition");
 
-    Level::CreateTask levelCreateTask(system, std::move(sceneDef));
+    auto levelCreateTask = std::move(*createTaskResult);
 
-    MLG_CHECK(levelCreateTask.Start(), "Failed to start level create task");
-
-    while(levelCreateTask.IsRunning())
+    while(levelCreateTask->IsRunning())
     {
         system.GetFileFetcher().ProcessCompletions();
-        levelCreateTask.Update();
+        levelCreateTask->Update();
     }
 
-    return levelCreateTask.Take();
+    return levelCreateTask->Take();
 }
 
 /// Applies random linear velocities to all bodies in the physics scene.

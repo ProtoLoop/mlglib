@@ -13,6 +13,9 @@
 namespace
 {
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+PerfCounter pcTriangleCount({ .Name = "GpuColorPass.Triangles" });
+
 constexpr wgpu::BindGroupLayoutEntry InputBindGroupLayoutEntries[]//
 {
     // World transform.
@@ -521,7 +524,10 @@ GpuColorPass::Execute(const wgpu::CommandEncoder& cmdEncoder,
             renderPass.SetBindGroup(1, materialProperties[matIndex].GetBindGroup(), 0, nullptr);
         }
 
-        renderPass.DrawIndexed(mesh.GetIndexCount(),
+        const uint32_t indexCount = mesh.GetIndexCount();
+        pcTriangleCount.Increment(indexCount / 3);
+
+        renderPass.DrawIndexed(indexCount,
             1,
             mesh.GetFirstIndex(),
             static_cast<int32_t>(mesh.GetBaseVertex()),
@@ -567,7 +573,7 @@ GpuColorPass::Execute(const wgpu::CommandEncoder& cmdEncoder,
 Result<wgpu::BindGroup>
 GpuColorPass::CreateMaterialBindGroup(const wgpu::Texture& texture,
     const GpuMaterialConstantsBuffer& materialConstants,
-    const std::string_view& name) const
+    const std::string_view name) const
 {
     auto entries = CreateMaterialBindGroupEntries(texture, m_DefaultSampler, materialConstants);
 

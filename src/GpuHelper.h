@@ -22,8 +22,8 @@ public:
     static constexpr size_t kNumTextureChannels = 4;
     static constexpr wgpu::TextureFormat kDepthBufferFormat = wgpu::TextureFormat::Depth24Plus;
 
-    /// The alignment requirement for texture data in bytes when uploading to the GPU.
-    static constexpr size_t kTextureAlignment = 256;
+    /// The alignment requirement for a row of texture data in bytes when uploading to the GPU.
+    static constexpr size_t kTextureStrideAlignment = 256;
 
     /// A task that creates a GpuHelper instance asynchronously.
     class CreateTask;
@@ -54,21 +54,21 @@ public:
     Result<wgpu::Texture> CreateTexture(const uint32_t width,
         const uint32_t height,
         const TextureFormat& format,
-        const std::string_view& name) const;
+        const std::string_view name) const;
 
     /// Creates a render target with the given dimensions and name.
     Result<GpuRenderTarget> CreateRenderTarget(
-        const uint32_t width, const uint32_t height, const std::string_view& name) const;
+        const uint32_t width, const uint32_t height, const std::string_view name) const;
 
     /// Creates a depth buffer with the given dimensions and name.
     Result<GpuDepthTarget> CreateDepthBuffer(
-        const uint32_t width, const uint32_t height, const std::string_view& name) const;
+        const uint32_t width, const uint32_t height, const std::string_view name) const;
 
     /// Creates a staging buffer for copying texture data to the GPU.
     Result<wgpu::Buffer> CreateTextureStagingBuffer(const uint32_t width,
         const uint32_t height,
         const TextureFormat& format,
-        const std::string_view& name) const;
+        const std::string_view name) const;
 
     /// Commits the data in the staging buffer to texture memory on the GPU.
     Result<> CommitTextureStagingBuffer(wgpu::Texture texture, wgpu::Buffer stagingBuffer) const;
@@ -79,15 +79,15 @@ public:
 
     /// Creates a vertex buffer with capacity for the given number of vertices.
     Result<GpuVertexBuffer> CreateVertexBuffer(const size_t count,
-        const std::string_view& name) const;
+        const std::string_view name) const;
 
     /// Creates an index buffer with capacity for the given number of indices.
     Result<GpuIndexBuffer> CreateIndexBuffer(const size_t count,
-        const std::string_view& name) const;
+        const std::string_view name) const;
 
     /// Creates a semantically-typed storage buffer.
     template<typename T>
-    Result<T> CreateStorageBuffer(const size_t count, const std::string_view& name) const
+    Result<T> CreateStorageBuffer(const size_t count, const std::string_view name) const
     {
         static_assert(is_gpu_storage_buffer_type_v<T>,
             "T must be a GpuBuffer type with GpuBufferUsage::Storage");
@@ -101,7 +101,7 @@ public:
 
     /// Creates a semantically-typed uniform buffer.
     template<typename T>
-    Result<T> CreateUniformBuffer(const size_t count, const std::string_view& name) const
+    Result<T> CreateUniformBuffer(const size_t count, const std::string_view name) const
     {
         static_assert(is_gpu_uniform_buffer_type_v<T>,
             "T must be a GpuBuffer type with GpuBufferUsage::Uniform");
@@ -115,7 +115,7 @@ public:
 
     /// Creates a semantically-typed indirect buffer.
     template<typename T>
-    Result<T> CreateIndirectBuffer(const size_t count, const std::string_view& name) const
+    Result<T> CreateIndirectBuffer(const size_t count, const std::string_view name) const
     {
         static_assert(is_gpu_indirect_buffer_type_v<T>,
             "T must be a GpuBuffer type with GpuBufferUsage::Indirect");
@@ -148,9 +148,9 @@ private:
         const std::string_view name) const;
 
     Result<wgpu::Buffer> CreateIndirectBuffer(const size_t size,
-        const std::string_view& name) const;
-    Result<wgpu::Buffer> CreateStorageBuffer(const size_t size, const std::string_view& name) const;
-    Result<wgpu::Buffer> CreateUniformBuffer(const size_t size, const std::string_view& name) const;
+        const std::string_view name) const;
+    Result<wgpu::Buffer> CreateStorageBuffer(const size_t size, const std::string_view name) const;
+    Result<wgpu::Buffer> CreateUniformBuffer(const size_t size, const std::string_view name) const;
 
     SDL_Window* m_Window{ nullptr };
     SDL_MetalView m_MetalView{ nullptr };

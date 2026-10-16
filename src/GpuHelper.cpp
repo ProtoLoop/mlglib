@@ -348,8 +348,8 @@ CreateDefaultTexture(GpuHelper& gpuHelper)
     const std::span<uint8_t> mappedSpan(static_cast<uint8_t*>(mapped),
         static_cast<size_t>(stagingBuffer->GetSize()));
 
-    const size_t dstRowStride = kDefaultTextureFormat.GetAlignedBytesPerRow(kDefaultTextureWidth,
-        GpuHelper::kTextureAlignment);
+    const size_t dstRowStride = kDefaultTextureFormat.GetPaddedBytesPerRow(kDefaultTextureWidth,
+        GpuHelper::kTextureStrideAlignment);
 
     for(size_t y = 0; y < kDefaultTextureHeight; ++y)
     {
@@ -945,20 +945,20 @@ Result<wgpu::Texture>
 GpuHelper::CreateTexture(const uint32_t width,
     const uint32_t height,
     const TextureFormat& format,
-    const std::string_view& name) const
+    const std::string_view name) const
 {
     MLG_CHECK(!format.IsUnknown(), "Unknown texture compression type: {}", format.GetName());
 
-    MLG_CHECK(HasTextureFormat(format.FormatId),
+    MLG_CHECK(HasTextureFormat(format.GetFormatId()),
         "Texture format not supported: {}",
         format.GetName());
 
-    MLG_CHECK(width % format.BlockTexelWidth == 0,
+    MLG_CHECK(width % format.GetBlockTexelWidth() == 0,
         "Width must be a multiple of the block texel width: {}",
-        format.BlockTexelWidth);
-    MLG_CHECK(height % format.BlockTexelWidth == 0,
+        format.GetBlockTexelWidth());
+    MLG_CHECK(height % format.GetBlockTexelWidth() == 0,
         "Height must be a multiple of the block texel width: {}",
-        format.BlockTexelWidth);
+        format.GetBlockTexelWidth());
 
     const wgpu::TextureDescriptor desc //
         {
@@ -971,7 +971,7 @@ GpuHelper::CreateTexture(const uint32_t width,
                 .height = height,
                 .depthOrArrayLayers = 1,
             },
-            .format = format.WgpuFormat,
+            .format = format.GetWgpuFormat(),
             .mipLevelCount = 1,
             .sampleCount = 1,
         };
@@ -984,7 +984,7 @@ GpuHelper::CreateTexture(const uint32_t width,
 
 Result<GpuRenderTarget>
 GpuHelper::CreateRenderTarget(
-    const uint32_t width, const uint32_t height, const std::string_view& name) const
+    const uint32_t width, const uint32_t height, const std::string_view name) const
 {
     const wgpu::TextureDescriptor desc //
         {
@@ -1011,7 +1011,7 @@ GpuHelper::CreateRenderTarget(
 
 Result<GpuDepthTarget>
 GpuHelper::CreateDepthBuffer(
-    const uint32_t width, const uint32_t height, const std::string_view& name) const
+    const uint32_t width, const uint32_t height, const std::string_view name) const
 {
     const wgpu::TextureDescriptor desc //
         {
@@ -1046,20 +1046,20 @@ Result<wgpu::Buffer>
 GpuHelper::CreateTextureStagingBuffer(const uint32_t width,
     const uint32_t height,
     const TextureFormat& format,
-    const std::string_view& name) const
+    const std::string_view name) const
 {
     MLG_CHECK(!format.IsUnknown(), "Unknown texture compression type: {}", format.GetName());
 
-    MLG_CHECK(HasTextureFormat(format.FormatId),
+    MLG_CHECK(HasTextureFormat(format.GetFormatId()),
         "Texture format not supported: {}",
         format.GetName());
 
-    MLG_CHECK(width % format.BlockTexelWidth == 0,
+    MLG_CHECK(width % format.GetBlockTexelWidth() == 0,
         "Width must be a multiple of the block texel width: {}",
-        format.BlockTexelWidth);
-    MLG_CHECK(height % format.BlockTexelWidth == 0,
+        format.GetBlockTexelWidth());
+    MLG_CHECK(height % format.GetBlockTexelWidth() == 0,
         "Height must be a multiple of the block texel width: {}",
-        format.BlockTexelWidth);
+        format.GetBlockTexelWidth());
 
     const size_t sizeofBuffer = format.GetAlignedSizeofData(width, height, 256);
     const wgpu::BufferUsage usage = wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc;
@@ -1099,7 +1099,7 @@ GpuHelper::CommitTextureStagingBuffer(
             {
                 .offset = 0,
                 .bytesPerRow = static_cast<uint32_t>(
-                    format.GetAlignedBytesPerRow(texture.GetWidth(), GpuHelper::kTextureAlignment)),
+                    format.GetPaddedBytesPerRow(texture.GetWidth(), GpuHelper::kTextureStrideAlignment)),
                 .rowsPerImage = texture.GetHeight(),
             },
             .buffer = stagingBuffer,
@@ -1125,7 +1125,7 @@ GpuHelper::CommitTextureStagingBuffer(
 }
 
 Result<GpuVertexBuffer>
-GpuHelper::CreateVertexBuffer(const size_t count, const std::string_view& name) const
+GpuHelper::CreateVertexBuffer(const size_t count, const std::string_view name) const
 {
     const wgpu::BufferUsage usage = wgpu::BufferUsage::Vertex | wgpu::BufferUsage::CopyDst;
 
@@ -1137,7 +1137,7 @@ GpuHelper::CreateVertexBuffer(const size_t count, const std::string_view& name) 
 }
 
 Result<GpuIndexBuffer>
-GpuHelper::CreateIndexBuffer(const size_t count, const std::string_view& name) const
+GpuHelper::CreateIndexBuffer(const size_t count, const std::string_view name) const
 {
     const wgpu::BufferUsage usage = wgpu::BufferUsage::Index | wgpu::BufferUsage::CopyDst;
 
@@ -1188,7 +1188,7 @@ GpuHelper::CreateGpuBuffer(const wgpu::BufferUsage usage,
 }
 
 Result<wgpu::Buffer>
-GpuHelper::CreateIndirectBuffer(const size_t size, const std::string_view& name) const
+GpuHelper::CreateIndirectBuffer(const size_t size, const std::string_view name) const
 {
     const wgpu::BufferUsage usage = wgpu::BufferUsage::Indirect | wgpu::BufferUsage::CopyDst;
 
@@ -1199,7 +1199,7 @@ GpuHelper::CreateIndirectBuffer(const size_t size, const std::string_view& name)
 }
 
 Result<wgpu::Buffer>
-GpuHelper::CreateStorageBuffer(const size_t size, const std::string_view& name) const
+GpuHelper::CreateStorageBuffer(const size_t size, const std::string_view name) const
 {
     const wgpu::BufferUsage usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
 
@@ -1210,7 +1210,7 @@ GpuHelper::CreateStorageBuffer(const size_t size, const std::string_view& name) 
 }
 
 Result<wgpu::Buffer>
-GpuHelper::CreateUniformBuffer(const size_t size, const std::string_view& name) const
+GpuHelper::CreateUniformBuffer(const size_t size, const std::string_view name) const
 {
     const wgpu::BufferUsage usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
 

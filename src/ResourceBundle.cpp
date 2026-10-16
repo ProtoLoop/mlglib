@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <functional>
 #include <map>
+#include <memory>
 #include <ranges>
 #include <SDL3/SDL_stdinc.h>
 #include <span>
@@ -258,7 +259,7 @@ CollectMeshDefs(const std::span<const ModelDef> modelDefs)
 Result<StringResource>
 AddString(std::map<std::string_view, StringResource>& stringResourceMap,
     std::vector<char>& chars,
-    const std::string_view& str)
+    const std::string_view str)
 {
     constexpr size_t kMaxCharCount = kMaxVectorSize<char>;
     const size_t kMaxStringCount =
@@ -327,8 +328,13 @@ CollectStrings(const std::span<const FlatNodeDef> flatNodeDefs,
 }
 Result<std::map<std::string_view, IndexEntry<TextureResource>>>
 CollectTextures(const std::span<const MeshDef* const> meshDefs,
-    const std::map<std::string_view, StringResource>& stringIndexMap)
+    const std::map<std::string_view, StringResource>& stringIndexMap,
+    const ResourceBundleBuilder::Options& options)
 {
+    MLG_CHECKV(0 == (options.TextureEncodings & ~TextureResourceEncoding::All),
+        "Invalid texture encodings specified: {:#08b}",
+        options.TextureEncodings);
+
     std::map<std::string_view, IndexEntry<TextureResource>> textureIndexMap;
 
     const size_t kMaxTextureCount =
@@ -358,6 +364,7 @@ CollectTextures(const std::span<const MeshDef* const> meshDefs,
         const TextureResource texRsrc //
             {
                 .TexturePath = stringRsrc,
+                .Encodings = options.TextureEncodings,
             };
 
         MLG_CHECKV(textureIndexMap.size() < kMaxTextureCount, "Texture index out of range");
@@ -898,19 +905,6 @@ AppendSpan(const std::span<const T> span, std::vector<std::byte>& buffer)
     return Result<>::Ok;
 }
 
-std::string_view
-MakeStringView(const StringResource& resource, const std::span<const char>& chars)
-{
-    if(!MLG_VERIFY((resource.CharIndex < chars.size())
-               && (chars.size() - resource.CharIndex >= resource.Length),
-           "Invalid string resource"))
-    {
-        return std::string_view();
-    }
-
-    return std::string_view(chars.subspan(resource.CharIndex, resource.Length));
-}
-
 uint32_t
 GetChecksum(const std::span<const std::byte>& buffer)
 {
@@ -933,10 +927,181 @@ GetChecksum(const std::span<const std::byte>& buffer)
 
 // ResourceBundle
 
+Result<std::unique_ptr<ResourceBundle::LoadTask>>
+ResourceBundle::Load(const FilePath& filePath, FileFetcher& fileFetcher)
+{
+    std::unique_ptr<LoadTask> loadTask(new LoadTask(filePath, fileFetcher));
+
+    MLG_CHECK(loadTask->Start(), "Failed to start load task");
+
+    return std::move(loadTask);
+}
+
+ResourceBundle::ResourceBundle(std::vector<std::byte>&& buffer)
+    : m_Buffer(std::move(buffer))
+{
+    MLG_ASSERT(m_Buffer.size() >= sizeof(Header));
+
+    MLG_ASSERT(GetHeader()->TotalSize <= m_Buffer.size());
+}
+
+std::span<const std::byte>
+ResourceBundle::GetBuffer() const
+{
+    MLG_ASSERT(!m_Buffer.empty(), "Buffer is empty");
+
+        return std::span<const std::byte>(m_Buffer);
+    }
+
+std::span<const char>
+ResourceBundle::GetChars() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<char>(header->CharsOffset, header->CharsLength)
+        : std::span<const char>();
+}
+
+std::span<const StringResource>
+ResourceBundle::GetStrings() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<StringResource>(header->StringsOffset, header->StringCount)
+        : std::span<const StringResource>();
+}
+
+std::span<const TextureResource>
+ResourceBundle::GetTextures() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<TextureResource>(header->TexturesOffset, header->TextureCount)
+        : std::span<const TextureResource>();
+}
+
+std::span<const MaterialResource>
+ResourceBundle::GetMaterials() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<MaterialResource>(header->MaterialsOffset, header->MaterialCount)
+        : std::span<const MaterialResource>();
+}
+
+std::span<const Vertex>
+ResourceBundle::GetVertices() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<Vertex>(header->VerticesOffset, header->VertexCount)
+        : std::span<const Vertex>();
+}
+
+std::span<const VertexIndex>
+ResourceBundle::GetIndices() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<VertexIndex>(header->IndicesOffset, header->IndexCount)
+        : std::span<const VertexIndex>();
+}
+
+std::span<const MeshResource>
+ResourceBundle::GetMeshes() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<MeshResource>(header->MeshesOffset, header->MeshCount)
+        : std::span<const MeshResource>();
+}
+
+std::span<const MeshResource>
+ResourceBundle::GetMeshes(const ModelResource& modelRsrc) const
+{
+    const std::span meshes = GetMeshes();
+
+    if(MLG_VERIFY(modelRsrc.FirstMeshIndex < meshes.size())
+        && MLG_VERIFY(meshes.size() - modelRsrc.FirstMeshIndex >= modelRsrc.MeshCount))
+    {
+        return meshes.subspan(modelRsrc.FirstMeshIndex, modelRsrc.MeshCount);
+    }
+
+    return std::span<const MeshResource>();
+}
+
+std::span<const ModelResource>
+ResourceBundle::GetModels() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<ModelResource>(header->ModelsOffset, header->ModelCount)
+        : std::span<const ModelResource>();
+}
+
+std::span<const ModelInstanceResource>
+ResourceBundle::GetModelInstances() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<ModelInstanceResource>(header->ModelInstancesOffset, header->ModelInstanceCount)
+        : std::span<const ModelInstanceResource>();
+}
+
+std::span<const ColliderResource>
+ResourceBundle::GetColliders() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<ColliderResource>(header->CollidersOffset, header->ColliderCount)
+        : std::span<const ColliderResource>();
+}
+
+std::span<const ColliderResource>
+ResourceBundle::GetColliders(const RigidBodyResource& rigidBodyRsrc) const
+{
+    const std::span colliders = GetColliders();
+
+    if(MLG_VERIFY(rigidBodyRsrc.FirstColliderIndex < colliders.size())
+        && MLG_VERIFY(
+            colliders.size() - rigidBodyRsrc.FirstColliderIndex >= rigidBodyRsrc.ColliderCount))
+    {
+        return colliders.subspan(rigidBodyRsrc.FirstColliderIndex, rigidBodyRsrc.ColliderCount);
+    }
+
+    return std::span<const ColliderResource>();
+}
+
+std::span<const RigidBodyResource>
+ResourceBundle::GetRigidBodies() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<RigidBodyResource>(header->RigidBodiesOffset, header->RigidBodyCount)
+        : std::span<const RigidBodyResource>();
+}
+
+std::span<const SceneNodeResource>
+ResourceBundle::GetNodes() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<SceneNodeResource>(header->NodesOffset, header->NodeCount)
+        : std::span<const SceneNodeResource>();
+}
+
 std::string_view
 ResourceBundle::GetStringView(const StringResource& stringResource) const
 {
-    return MakeStringView(stringResource, GetChars());
+    const std::span<const char> chars = GetChars();
+    if(!MLG_VERIFY((stringResource.CharIndex < chars.size())
+               && (chars.size() - stringResource.CharIndex >= stringResource.Length),
+           "Invalid string resource"))
+    {
+        return std::string_view();
+    }
+
+    return std::string_view(chars.subspan(stringResource.CharIndex, stringResource.Length));
 }
 
 bool
@@ -974,10 +1139,28 @@ ResourceBundle::Validate(const std::span<const std::byte>& buffer)
     return true;
 }
 
+// private:
+
+const ResourceBundle::Header* ResourceBundle::GetHeader() const
+{
+    if(!MLG_VERIFY(m_Buffer.size() >= sizeof(Header), "Buffer is empty"))
+    {
+        return nullptr;
+    }
+    const void* p = m_Buffer.data();
+    return static_cast<const Header*>(p);
+}
+
 // ResourceBundleBuilder
 
 Result<ResourceBundle>
 ResourceBundleBuilder::Build(const SceneDef& sceneDef)
+{
+    return Build(sceneDef, Options{});
+}
+
+Result<ResourceBundle>
+ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
 {
     // Free old buffer mem
     std::vector<std::byte>().swap(m_Buffer);
@@ -992,7 +1175,7 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef)
 
     const auto stringIndexMap = CollectStrings(*flatNodeDefs, *meshDefs, chars);
     MLG_CHECK(stringIndexMap);
-    const auto textureIndexMap = CollectTextures(*meshDefs, *stringIndexMap);
+    const auto textureIndexMap = CollectTextures(*meshDefs, *stringIndexMap, options);
     MLG_CHECK(textureIndexMap);
     const auto materialIndexMap = CollectMaterials(*meshDefs, *textureIndexMap);
     MLG_CHECK(materialIndexMap);

@@ -48,14 +48,15 @@ taken once. `Take()` is not required by `ICoopTask`.
 A task can own other tasks and start and update them as part of its own work.
 It must let any children it starts finish before it finishes.
 
-Use `CoopTaskBatch` to start and update several tasks together. Give it a nonempty
-collection of non-null task pointers. The batch does not own the tasks, so they
-must stay at the same addresses and outlive it. A batch is itself a task and can
-be included in another batch.
+Use `CoopTaskBatch` to update several tasks together. Start each child before
+starting the batch. Give the batch a nonempty collection of non-null task
+pointers. The batch does not own its children, so they must stay at the same
+addresses and outlive it. A batch is itself a task and can be included in another
+batch.
 
-The batch finishes after all its children finish. If a child fails to start,
-the batch still lets the other children finish. It does not decide how to handle
-child failures or collect their results. That remains the caller's job.
+The batch finishes after all its children finish. The caller handles startup
+failures and collects results. If some children fail to start, the caller must
+still let successfully started children finish before destroying them.
 
 ## Valid Construction
 

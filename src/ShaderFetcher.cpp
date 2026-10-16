@@ -35,7 +35,7 @@ ShaderFetcher::OnStart(const FilePath& path)
 
     MLG_CHECKV(Stage::None == m_Stage, "Task has already been started");
 
-    MLG_INFO("Loading shader...");
+    MLG_DEBUG("Loading shader...");
 
     m_Stage = Stage::Failed;
 
@@ -98,7 +98,7 @@ ShaderFetcher::CreateShaderModule(const std::span<const std::byte> shaderData)
     const wgpu::ShaderSourceWGSL wgsl{ { .code = shaderCode } };
     const wgpu::ShaderModuleDescriptor desc{ .nextInChain = &wgsl, .label = label };
 
-    MLG_INFO("Creating shader module...");
+    MLG_DEBUG("Creating shader module...");
 
     m_ShaderModule = m_GpuHelper->GetDevice().CreateShaderModule(&desc);
     MLG_CHECK(m_ShaderModule, "Failed to create shader module");

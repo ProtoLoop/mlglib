@@ -106,7 +106,7 @@ public:
     /// Creates a material bind group for the color pass.
     Result<wgpu::BindGroup> CreateMaterialBindGroup(const wgpu::Texture& texture,
         const GpuMaterialConstantsBuffer& materialConstants,
-        const std::string_view& name) const;
+        const std::string_view name) const;
 
 private:
     static constexpr const char* ShaderPath = "shaders/ColorShader.wgsl";

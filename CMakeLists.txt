@@ -400,7 +400,7 @@ set(SSG_SOURCES
   src/stb_image.cpp
   src/System.cpp
   src/TextureFetcher.cpp
-  src/TextureHelper.cpp
+  src/TextureLoader.cpp
   src/ThreadPool.cpp
   src/Timer.cpp
   src/VecMath.cpp
@@ -444,7 +444,7 @@ set(SSG_HEADERS
   src/System.h
   src/TextureFetcher.h
   src/TextureFormat.h
-  src/TextureHelper.h
+  src/TextureLoader.h
   src/ThreadPool.h
   src/Timer.h
   src/VecMath.h

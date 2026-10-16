@@ -7,7 +7,6 @@
 #include "GpuTypes.h"
 #include "SceneTypes.h"
 #include "TextureFetcher.h"
-#include "Timer.h"
 
 #include <memory>
 #include <optional>
@@ -30,13 +29,18 @@ public:
     View(View&&) = delete;
     View& operator=(View&&) = delete;
 
+    class CreateTask;
+
+    static Result<std::unique_ptr<CreateTask>> Create(System& system,
+        const DirectoryPath& parentPath,
+        const ResourceBundle& resourceBundle,
+        const Scene& scene);
+
     Result<> Render(const CameraView& cameraView);
 
     Result<> Composite(const GpuRenderTarget& target);
 
     Result<> Composite(const GpuRenderTarget& target, const Rect& dstRect);
-
-    class CreateTask;
 
 private:
     View(const GpuHelper& gpuHelper,
@@ -91,10 +95,6 @@ private:
 class View::CreateTask : public ICoopTask<>
 {
 public:
-    CreateTask(System& system,
-        const DirectoryPath& parentPath,
-        const ResourceBundle& resourceBundle,
-        const Scene& scene);
 
     CreateTask() = delete;
     ~CreateTask() override = default;
@@ -106,6 +106,8 @@ public:
     Result<std::unique_ptr<View>> Take();
 
 private:
+    friend class View;
+    
     enum class Stage
     {
         None,
@@ -114,11 +116,15 @@ private:
         Failed
     };
 
+    CreateTask(System& system,
+        const DirectoryPath& parentPath,
+        const ResourceBundle& resourceBundle,
+        const Scene& scene);
+
     Result<> OnStart() override;
 
     void OnUpdate() override;
 
-    Timer m_Timer;
     System* m_System{ nullptr };
     const ResourceBundle* m_ResourceBundle{ nullptr };
     const Scene* m_Scene{ nullptr };

@@ -8,6 +8,7 @@
 
 template<typename... StartParams>
 class ICoopTask;
+class CoopTaskBatch;
 
 class ICoopTaskBase
 {
@@ -37,6 +38,8 @@ public:
 private:
     template<typename... StartParams>
     friend class ICoopTask;
+
+    friend class CoopTaskBatch;
 
     enum class Stage
     {
@@ -89,10 +92,12 @@ protected:
     virtual Result<> OnStart(StartParams... params) = 0;
 };
 
-/// Starts and updates a group of tasks until they have all finished.
+/// Manages a group of tasks until they have all finished.
+/// Tasks must be started BEFORE calling Start() on the batch.
+/// The task batch DOES NOT call Start() on sub-tasks.
 /// Supply at least one task and no null pointers. Keep the tasks alive and at the same
 /// addresses until the batch is destroyed. The batch does not own them.
-/// If one task fails to start, the others still run to completion.
+/// The batch will run until all tasks have finished.
 /// The caller handles failures and collects any results. Batches can also be tasks.
 class CoopTaskBatch : public ICoopTask<>
 {
@@ -100,6 +105,7 @@ public:
     CoopTaskBatch(std::initializer_list<ICoopTask*> tasks);
     explicit CoopTaskBatch(std::span<ICoopTask*> tasks);
     explicit CoopTaskBatch(std::vector<ICoopTask*> tasks);
+
     ~CoopTaskBatch() override = default;
     CoopTaskBatch() = default;
     CoopTaskBatch(const CoopTaskBatch&) = delete;

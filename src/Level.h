@@ -4,10 +4,10 @@
 #include "FilePath.h"
 #include "ResourceBundle.h"
 #include "SceneTypes.h"
+#include "Timer.h"
 #include "View.h"
 
 #include <memory>
-#include <optional>
 #include <variant>
 
 class Scene;
@@ -27,6 +27,10 @@ public:
     Level& operator=(const Level&) = delete;
     Level(Level&&) = delete;
     Level& operator=(Level&&) = delete;
+
+    static Result<std::unique_ptr<CreateTask>> CreateFromSceneDef(System& system, SceneDef&& sceneDef);
+    static Result<std::unique_ptr<CreateTask>> CreateFromBundle(System& system, const FilePath& bundlePath);
+    static Result<std::unique_ptr<CreateTask>> CreateFromGltf(System& system, const FilePath& gltfPath);
 
     Scene& GetScene() const { return *m_Scene; }
     View& GetView() const { return *m_View; }
@@ -60,15 +64,11 @@ public:
     CreateTask(CreateTask&&) = delete;
     CreateTask& operator=(CreateTask&&) = delete;
 
-    CreateTask(System& system, SceneDef&& sceneDef);
-
-    CreateTask(System& system, BundleParams bundleParams);
-
-    CreateTask(System& system, GltfParams gltfParams);
-
     Result<std::unique_ptr<Level>> Take();
 
 private:
+    friend class Level;
+
     enum class Stage
     {
         None,
@@ -81,15 +81,17 @@ private:
         Failed
     };
 
+    CreateTask(System& system, SceneDef&& sceneDef);
+
+    CreateTask(System& system, BundleParams bundleParams);
+
+    CreateTask(System& system, GltfParams gltfParams);
+
     Result<> OnStart() override;
 
     void OnUpdate() override;
 
     Result<FilePath> GetPath() const;
-
-    static Result<ResourceBundle> CreateResourceBundle(const SceneDef& sceneDef);
-
-    static Result<std::unique_ptr<Scene>> CreateScene(const ResourceBundle& resourceBundle);
 
     Result<> CreateView(const DirectoryPath& parentPath, const ResourceBundle& resourceBundle, Scene& scene);
 
@@ -97,13 +99,15 @@ private:
 
     std::variant<SceneDef, GltfParams, BundleParams> m_Params;
 
-    std::optional<ResourceBundle::LoadTask> m_RsrcBundleLoadTask;
+    std::unique_ptr<ResourceBundle::LoadTask> m_RsrcBundleLoadTask;
 
-    std::optional<View::CreateTask> m_CreateViewTask;
+    std::unique_ptr<View::CreateTask> m_CreateViewTask;
 
     ResourceBundle m_ResourceBundle;
     std::unique_ptr<Scene> m_Scene;
     std::unique_ptr<Level> m_Level;
+
+    Timer m_Timer;
 
     Stage m_Stage{ Stage::None };
 };

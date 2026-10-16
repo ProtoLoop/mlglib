@@ -24,10 +24,11 @@ flowchart TD
     K --> G
 ```
 
-Cooked textures stay in individual files so they can load in parallel. The
-bundle retains the original texture paths. At runtime, the loader selects a
-compressed variant when the GPU supports it. Compressed pixel data uploads
-without image decoding at runtime.
+Cooked textures stay in individual files so they can load in parallel. Each
+texture resource stores its original path and flags indicating which additional
+encodings are available. The loader derives the compressed filename from the
+original path when both the availability flag and GPU support permit that
+encoding. Compressed pixel data uploads without image decoding at runtime.
 
 ## Intermediate definitions
 
@@ -73,6 +74,12 @@ Before compression, the cooker resizes images whose dimensions are not multiples
 of four, rounding each dimension up to the next multiple. The cooked header
 records the resized dimensions.
 
-[TextureFetcher](../../src/TextureFetcher.cpp) selects the `.bc7` variant when
-the device supports BC7. Otherwise, it loads the original image, which is decoded
-at runtime.
+The Cook tool marks BC7 as available when building the bundle. Bundles built
+directly from scene definitions or glTF use the default flags, which indicate no
+additional encodings.
+
+[TextureLoader](../../src/TextureLoader.cpp) selects the `.bc7` file only when the
+resource advertises BC7 and the device supports it. Otherwise, it loads the
+original image, which is decoded at runtime.
+[TextureFetcher](../../src/TextureFetcher.cpp) manages the collection of
+texture-loading tasks.

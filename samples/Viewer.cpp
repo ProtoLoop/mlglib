@@ -90,45 +90,31 @@ LoadLevel(System& system, const FilePath& path)
 
     const std::string_view ext(destination.data(), extOrig.size());
 
+    std::unique_ptr<Level::CreateTask> createTask;
+
     if(ext == ".gltf")
     {
-        const Level::CreateTask::GltfParams gltfParams//
-        {
-            .Path = path
-        };
-        Level::CreateTask levelCreateTask(system, gltfParams);
+        auto createTaskResult = Level::CreateFromGltf(system, path);
+        MLG_CHECK(createTaskResult, "Failed to create level from glTF");
 
-        MLG_CHECK(levelCreateTask.Start(), "Failed to start level create task");
-
-        while(levelCreateTask.IsRunning())
-        {
-            system.GetFileFetcher().ProcessCompletions();
-            levelCreateTask.Update();
-        }
-
-        return levelCreateTask.Take();
+        createTask = std::move(*createTaskResult);
     }
     
     if(ext == ".bin")
     {
-        const Level::CreateTask::BundleParams bundleParams//
-        {
-            .Path = path
-        };
-        Level::CreateTask levelCreateTask(system, bundleParams);
+        auto createTaskResult = Level::CreateFromBundle(system, path);
+        MLG_CHECK(createTaskResult, "Failed to create level from bundle");
 
-        MLG_CHECK(levelCreateTask.Start(), "Failed to start level create task");
-
-        while(levelCreateTask.IsRunning())
-        {
-            system.GetFileFetcher().ProcessCompletions();
-            levelCreateTask.Update();
-        }
-
-        return levelCreateTask.Take();
+        createTask = std::move(*createTaskResult);
     }
 
-    return Result<>::Fail;
+    while(createTask->IsRunning())
+    {
+        system.GetFileFetcher().ProcessCompletions();
+        createTask->Update();
+    }
+
+    return createTask->Take();
 }
 
 //constexpr const char* SPONZA_PATH = "main_sponza/NewSponza_Main_glTF_003.gltf";

@@ -140,23 +140,6 @@ CreateMaterialProperties(const GpuHelper& gpuHelper,
 
     return materialProperties;
 }
-
-Result<std::vector<RelativeFilePath>>
-GetTexturePaths(const ResourceBundle& resourceBundle)
-{
-    const std::span texResources = resourceBundle.GetTextures();
-    std::vector<RelativeFilePath> texturePaths;
-    texturePaths.reserve(texResources.size());
-    for(const auto& texRsrc : texResources)
-    {
-        const std::string_view sv = resourceBundle.GetStringView(texRsrc.TexturePath);
-        auto path = RelativeFilePath::Create(sv);
-        MLG_CHECK(path, "Failed to create FilePath");
-
-        texturePaths.emplace_back(std::move(*path));
-    }
-    return texturePaths;
-}
 } // namespace
 
 View::View(const GpuHelper& gpuHelper,
@@ -189,6 +172,17 @@ View::View(const GpuHelper& gpuHelper,
 }
 
 View::~View() = default;
+
+Result<std::unique_ptr<View::CreateTask>>
+View::Create(System& system,
+    const DirectoryPath& parentPath,
+    const ResourceBundle& resourceBundle,
+    const Scene& scene)
+{
+    std::unique_ptr<CreateTask> task(new CreateTask(system, parentPath, resourceBundle, scene));
+    MLG_CHECK(task->Start(), "Failed to start view creation task");
+    return std::move(task);
+}
 
 Result<>
 View::Render(const CameraView& cameraView)
@@ -464,26 +458,54 @@ View::CreateTask::Take()
 Result<>
 View::CreateTask::OnStart()
 {
-    m_Timer.Start();
-
     m_Stage = Stage::Failed;
-
-    auto texturePaths = GetTexturePaths(*m_ResourceBundle);
-    MLG_CHECK(texturePaths, "Failed to get texture paths");
 
     m_TextureFetcher.emplace(m_System->GetGpuHelper(),
         m_System->GetFileFetcher(),
         m_System->GetThreadPool(),
         m_ParentPath,
-        std::move(*texturePaths));
+        *m_ResourceBundle);
 
-    ICoopTask<>* tasks[] = //
-        {
-            &m_TextureFetcher.value(),
-            &m_ColorPassTask,
-            &m_CompositorPassTask,
-            &m_TransformPassTask,
-        };
+    // If one task fails to start, it will not be added to the task batch.
+    // But we still have to let the tasks that did start run to completion.
+    
+    InplaceVector<ICoopTask<>*, 4> tasks;
+
+    if(!m_TextureFetcher->Start())
+    {
+        MLG_ERROR("Failed to start texture fetcher");
+    }
+    else
+    {
+        tasks.push_back(&m_TextureFetcher.value());
+    }
+
+    if(!m_ColorPassTask.Start())
+    {
+        MLG_ERROR("Failed to start color pass task");
+    }
+    else
+    {
+        tasks.push_back(&m_ColorPassTask);
+    }
+
+    if(!m_CompositorPassTask.Start())
+    {
+        MLG_ERROR("Failed to start compositor pass task");
+    }
+    else
+    {
+        tasks.push_back(&m_CompositorPassTask);
+    }
+
+    if(!m_TransformPassTask.Start())
+    {
+        MLG_ERROR("Failed to start transform pass task");
+    }
+    else
+    {
+        tasks.push_back(&m_TransformPassTask);
+    }
 
     m_TaskBatch.emplace(tasks);
 
@@ -520,8 +542,6 @@ View::CreateTask::OnUpdate()
             MLG_ERROR("View creation failed");
             [[fallthrough]];
         case Stage::Succeeded:
-            m_Timer.Stop();
-            MLG_INFO("View created in {} ms", m_Timer.GetElapsedSeconds() * 1000);
             SetComplete();
             break;
     }

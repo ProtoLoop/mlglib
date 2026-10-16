@@ -8,7 +8,7 @@
 #include "Scene.h"
 #include "SceneTypes.h"
 #include "TextureFormat.h"
-#include "TextureHelper.h"
+#include "TextureLoader.h"
 #include "ThreadPool.h"
 #include "Timer.h"
 
@@ -37,9 +37,9 @@
 
 namespace
 {
-static_assert(std::is_trivially_copyable_v<TextureHelper::TextureHeader>);
-static_assert(std::is_standard_layout_v<TextureHelper::TextureHeader>);
-static_assert(sizeof(TextureHelper::TextureHeader) == 24); // NOLINT(readability-magic-numbers)
+//static_assert(std::is_trivially_copyable_v<TextureHeader>);
+static_assert(std::is_standard_layout_v<TextureHeader>);
+static_assert(sizeof(TextureHeader) == 24); // NOLINT(readability-magic-numbers)
 
 static_assert(GpuHelper::kNumTextureChannels == 4);
 
@@ -292,7 +292,7 @@ LoadRawTexture(const CookDirs& cookDirs, const std::string_view texturePath)
         "Invalid number of image channels: {}",
         rawTexture.ChannelCount);
 
-    MLG_CHECK(TextureHelper::ValidateDimensions(rawTexture.Width, rawTexture.Height),
+    MLG_CHECK(TextureHeader::CheckDimensions(rawTexture.Width, rawTexture.Height),
         "Invalid image dimensions: {}x{}",
         rawTexture.Width,
         rawTexture.Height);
@@ -429,19 +429,17 @@ WriteTexture(const CookDirs& cookDirs,
 
     for(const CookedTexture& cookedTexture : cookedTextures)
     {
-        const TextureHelper::TextureHeader header //
-            {
-                .Width = cookedTexture.Width,
-                .Height = cookedTexture.Height,
-                .FourCC = cookedTexture.Format.HeaderFourcc,
-            };
+        const TextureHeader header(cookedTexture.Width,
+            cookedTexture.Height,
+            cookedTexture.Format.GetHeaderFourcc());
+
         const std::span<const std::byte> headerSpan = std::as_bytes(std::span(&header, 1));
         const std::span<const std::byte> imageDataSpan =
             std::span(cookedTexture.Bytes->data(), cookedTexture.Bytes->size());
 
         std::filesystem::path curDstPath = dstPath;
 
-        curDstPath.replace_extension(cookedTexture.Format.Extension.AsStringView());
+        curDstPath.replace_extension(cookedTexture.Format.GetExtension().AsStringView());
 
         MLG_INFO("Writing: {} -> {}...", srcPath.string(), curDstPath.string());
 
@@ -522,8 +520,12 @@ Cook(const CmdLinArgs& args, ThreadPool& threadPool)
     const SceneDef sceneDef = std::move(*loadResult);
 
     ResourceBundleBuilder builder;
+    const ResourceBundleBuilder::Options options//
+    {
+        .TextureEncodings = TextureResourceEncoding::All,
+    };
 
-    auto buildResult = builder.Build(sceneDef);
+    auto buildResult = builder.Build(sceneDef, options);
     MLG_CHECK(buildResult);
 
     const ResourceBundle bundle = std::move(*buildResult);

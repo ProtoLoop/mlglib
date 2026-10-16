@@ -77,8 +77,7 @@ CoopTaskBatch::OnStart()
     for(size_t i = 0; i < m_Tasks.size();)
     {
         MLG_ASSERT(m_Tasks[i] != nullptr, "Task is null");
-
-        if(m_Tasks[i]->Start())
+        if(MLG_VERIFY(m_Tasks[i]->WasStarted(), "Task was not started"))
         {
             ++i;
         }

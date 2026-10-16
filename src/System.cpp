@@ -79,7 +79,7 @@ System::CreateTask::OnStart(const std::string_view appName)
     // Set the initial stage to failed to ensure that any early exit will mark the task as failed.
     m_Stage = Stage::Failed;
 
-    MLG_INFO("Creating System...");
+    MLG_DEBUG("Creating System...");
 
     MLG_CHECK(m_GpuHelperTask.Start(appName), "Failed to start GpuHelper creation");
 

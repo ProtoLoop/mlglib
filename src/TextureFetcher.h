@@ -1,12 +1,12 @@
 #pragma once
 
-#include "Containers.h"
 #include "CoopTask.h"
 #include "FilePath.h"
 #include "Result.h"
-#include "TextureHelper.h"
+#include "TextureLoader.h"
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <vector>
 #include <webgpu/webgpu_cpp.h>
@@ -24,7 +24,8 @@ public:
         FileFetcher& fileFetcher,
         ThreadPool& threadPool,
         const DirectoryPath& parentPath,
-        std::vector<RelativeFilePath> texturePaths);
+        const ResourceBundle& resourceBundle);
+        
     ~TextureFetcher() override = default;   // The base class will verify completion
     TextureFetcher(const TextureFetcher&) = delete;
     TextureFetcher& operator=(const TextureFetcher&) = delete;
@@ -52,11 +53,11 @@ private:
     FileFetcher* m_FileFetcher{ nullptr };
     ThreadPool* m_ThreadPool{ nullptr };
     wgpu::CommandEncoder m_CommandEncoder{ nullptr };
-    BoundedVector<TextureFetchTask> m_Tasks;
+    std::vector<std::unique_ptr<TextureLoader>> m_Loaders;
     std::optional<CoopTaskBatch> m_TaskBatch;
     std::vector<wgpu::Texture> m_Textures;
     DirectoryPath m_ParentPath;
-    std::vector<RelativeFilePath> m_TexturePaths;
+    const ResourceBundle* m_ResourceBundle{ nullptr };
 
     Stage m_Stage{ Stage::None };
 

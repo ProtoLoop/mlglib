@@ -11,7 +11,7 @@
 #include "View.h"
 
 #include <imgui.h>
-#include <optional>
+#include <memory>
 #include <SDL3/SDL_events.h>
 
 namespace
@@ -122,7 +122,7 @@ private:
 
     System* m_System{ nullptr };
 
-    std::optional<Level::CreateTask> m_LevelCreateTask;
+    std::unique_ptr<Level::CreateTask> m_LevelCreateTask;
 
     std::unique_ptr<Level> m_Level;
 
@@ -150,8 +150,10 @@ TriangleApp::OnStart(System& system)
     auto sceneDef = CreateScene();
     MLG_CHECK(sceneDef, "Failed to create SceneDef");
 
-    m_LevelCreateTask.emplace(*m_System, std::move(*sceneDef));
-    MLG_CHECK(m_LevelCreateTask->Start(), "Failed to start level creation task");
+    auto createTaskResult = Level::CreateFromSceneDef(system, std::move(*sceneDef));
+    MLG_CHECK(createTaskResult, "Failed to create level from scene definition");
+
+    m_LevelCreateTask = std::move(*createTaskResult);
 
     m_Stage = Stage::CreatingLevel;
 

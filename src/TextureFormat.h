@@ -8,8 +8,9 @@
 
 /// Encapsulates information about a texture format, including its compression type, block size, and
 /// encoding.
-struct TextureFormat final
+class TextureFormat final
 {
+public:
     enum class FormatIdentifier
     {
         Unknown,
@@ -60,8 +61,34 @@ struct TextureFormat final
         std::string_view m_Value;
     };
 
+private:
+
+    consteval TextureFormat(const FormatIdentifier formatId,
+        const wgpu::TextureFormat wgpuFormat,
+        const uint32_t bytesPerBlock,
+        const uint32_t blockTexelWidth,
+        const FileExtension extension,
+        const FourCC headerFourcc)
+        : m_FormatId(formatId),
+          m_WgpuFormat(wgpuFormat),
+          m_BytesPerBlock(bytesPerBlock),
+          m_BlockTexelWidth(blockTexelWidth),
+          m_Extension(extension),
+          m_HeaderFourcc(headerFourcc)
+    {
+    }
+
+public:
+
+    constexpr FormatIdentifier GetFormatId() const noexcept { return m_FormatId; }
+    constexpr wgpu::TextureFormat GetWgpuFormat() const noexcept { return m_WgpuFormat; }
+    constexpr uint32_t GetBytesPerBlock() const noexcept { return m_BytesPerBlock; }
+    constexpr uint32_t GetBlockTexelWidth() const noexcept { return m_BlockTexelWidth; }
+    constexpr FileExtension GetExtension() const noexcept { return m_Extension; }
+    constexpr FourCC GetHeaderFourcc() const noexcept { return m_HeaderFourcc; }
+
     /// Returns the human-readable name of the texture format.
-    constexpr std::string_view GetName() const noexcept { return HeaderFourcc.AsStringView(); }
+    constexpr std::string_view GetName() const noexcept { return m_HeaderFourcc.AsStringView(); }
 
     /// Returns the number of image blocks in a vertical column of the texture.
     /// The number of blocks per column can vary depending on the compression scheme.
@@ -69,11 +96,13 @@ struct TextureFormat final
     /// BC7 compressed images have one block per 4x4 texel region.
     constexpr size_t GetBlockRowCount(const uint32_t imageHeight) const
     {
-        MLG_ABORTIF(BlockTexelWidth == 0, "Compressed block texel width is zero");
-        MLG_ABORTIF(std::numeric_limits<size_t>::max() - BlockTexelWidth + 1 < imageHeight,
+        MLG_ABORTIF(m_BlockTexelWidth == 0, "Block width is zero");
+        MLG_ABORTIF(std::numeric_limits<size_t>::max() - m_BlockTexelWidth + 1 < imageHeight,
             "Image height too large: {}",
             imageHeight);
-        return (imageHeight + BlockTexelWidth - 1) / BlockTexelWidth;
+
+        // Round up to the next full block
+        return (imageHeight + m_BlockTexelWidth - 1) / m_BlockTexelWidth;
     }
 
     /// Returns the number of bytes in a row of the texture.
@@ -83,20 +112,23 @@ struct TextureFormat final
     /// ((width + 3) / 4) bytes per row.
     constexpr size_t GetBytesPerRow(const uint32_t imageWidth) const
     {
-        MLG_ABORTIF(BlockTexelWidth == 0, "Block texel width is zero");
-        MLG_ABORTIF(std::numeric_limits<size_t>::max() - BlockTexelWidth + 1 < imageWidth,
+        MLG_ABORTIF(m_BlockTexelWidth == 0, "Block texel width is zero");
+        MLG_ABORTIF(std::numeric_limits<size_t>::max() - m_BlockTexelWidth + 1 < imageWidth,
             "Image width too large: {}",
             imageWidth);
-        const size_t blocksPerRow = (imageWidth + BlockTexelWidth - 1) / BlockTexelWidth;
 
-        MLG_ABORTIF(std::numeric_limits<size_t>::max() / BlockTexelWidth <= blocksPerRow,
+        // Round up to the next full block
+        const size_t blocksPerRow = (imageWidth + m_BlockTexelWidth - 1) / m_BlockTexelWidth;
+
+        MLG_ABORTIF(std::numeric_limits<size_t>::max() / m_BlockTexelWidth <= blocksPerRow,
             "Row width too large: {}",
             imageWidth);
 
-        return blocksPerRow * BytesPerBlock;
+        return blocksPerRow * m_BytesPerBlock;
     }
 
-    constexpr size_t GetAlignedBytesPerRow(const uint32_t imageWidth,
+    /// Returns the number of bytes in a row of the texture, aligned to the specified alignment.
+    constexpr size_t GetPaddedBytesPerRow(const uint32_t imageWidth,
         const uint32_t alignment) const
     {
         MLG_ABORTIF(alignment == 0, "Alignment must be non-zero");
@@ -118,6 +150,9 @@ struct TextureFormat final
     }
 
     /// Returns the size of the texture data in bytes, given the image width and height.
+    /// Width/height are used to calculate the block column/row count for the texture.
+    /// If width/height are not multiples of the block texel dimensions, the calculation will round
+    /// up to the next full block.
     constexpr size_t GetSizeofData(const uint32_t imageWidth, const uint32_t imageHeight) const
     {
         const size_t blockRows = GetBlockRowCount(imageHeight);
@@ -136,7 +171,7 @@ struct TextureFormat final
         const uint32_t imageWidth, const uint32_t imageHeight, const uint32_t alignment) const
     {
         const size_t blockRows = GetBlockRowCount(imageHeight);
-        const size_t bytesPerRow = GetAlignedBytesPerRow(imageWidth, alignment);
+        const size_t bytesPerRow = GetPaddedBytesPerRow(imageWidth, alignment);
 
         MLG_ABORTIF(std::numeric_limits<size_t>::max() / bytesPerRow < blockRows,
             "Texture size too large: {} x {}",
@@ -146,43 +181,46 @@ struct TextureFormat final
         return blockRows * bytesPerRow;
     }
 
-    constexpr bool IsUnknown() const noexcept { return FormatId == FormatIdentifier::Unknown; }
-    constexpr bool IsNone() const noexcept { return FormatId == FormatIdentifier::RGBA; }
-    constexpr bool IsBC7() const noexcept { return FormatId == FormatIdentifier::BC7; }
+    constexpr bool IsUnknown() const noexcept { return m_FormatId == FormatIdentifier::Unknown; }
+    constexpr bool IsRgba() const noexcept { return m_FormatId == FormatIdentifier::RGBA; }
+    constexpr bool IsBC7() const noexcept { return m_FormatId == FormatIdentifier::BC7; }
 
     /// Returns the texture format for raw RGBA images.
     static consteval const TextureFormat& GetRGBA()
     {
-        static constexpr const TextureFormat RGBA //
-            {
-                .FormatId = FormatIdentifier::RGBA,
-                .WgpuFormat = wgpu::TextureFormat::RGBA8UnormSrgb,
-                .BytesPerBlock = 4,
-                .BlockTexelWidth = 1,
-                .Extension = TextureFormat::FileExtension{ "" },
-                .HeaderFourcc = TextureFormat::FourCC{ 'r', 'g', 'b', 'a' },
-            };
+        static constexpr const TextureFormat RGBA(
+                FormatIdentifier::RGBA,
+                wgpu::TextureFormat::RGBA8UnormSrgb,
+                4,
+                1,
+                TextureFormat::FileExtension{ "" },
+                TextureFormat::FourCC{ 'r', 'g', 'b', 'a' }
+            );
         return RGBA;
     }
 
     /// Returns the texture format for BC7 compressed images.
     static consteval const TextureFormat& GetBC7()
     {
-        static constexpr const TextureFormat BC7 //
-            {
-                .FormatId = FormatIdentifier::BC7,
-                .WgpuFormat = wgpu::TextureFormat::BC7RGBAUnormSrgb,
-                .BytesPerBlock = 16,
-                .BlockTexelWidth = 4,
-                .Extension = TextureFormat::FileExtension{ ".bc7" },
-                .HeaderFourcc = TextureFormat::FourCC{ 'b', 'c', '7', ' ' },
-            };
+        static constexpr const TextureFormat BC7(FormatIdentifier::BC7,
+            wgpu::TextureFormat::BC7RGBAUnormSrgb,
+            16,
+            4,
+            TextureFormat::FileExtension{ ".bc7" },
+            TextureFormat::FourCC{ 'b', 'c', '7', ' ' });
         return BC7;
     }
     /// Returns an unknown texture format.
     static consteval const TextureFormat& GetUnknown()
     {
-        static constexpr const TextureFormat Unknown{};
+        static constexpr const TextureFormat Unknown(
+            FormatIdentifier::Unknown,
+            wgpu::TextureFormat::Undefined,
+            0,
+            0,
+            TextureFormat::FileExtension{ "" },
+            TextureFormat::FourCC{ 'u', 'n', 'k', ' ' }
+        );
         return Unknown;
     }
 
@@ -195,12 +233,14 @@ struct TextureFormat final
     /// Returns the texture format corresponding to the file extension.
     static constexpr TextureFormat GetFormat(const FileExtension fileExtension);
 
-    FormatIdentifier FormatId{ FormatIdentifier::Unknown };
-    wgpu::TextureFormat WgpuFormat{ wgpu::TextureFormat::Undefined };
-    uint32_t BytesPerBlock{ 0 };   // Number of bytes per compressed block
-    uint32_t BlockTexelWidth{ 0 }; // Width/height of a block in texels
-    FileExtension Extension;       // File extension associated with the texture format
-    FourCC HeaderFourcc;           // FourCC code used in the texture header to identify the format
+private:
+
+    FormatIdentifier m_FormatId{ FormatIdentifier::Unknown };
+    wgpu::TextureFormat m_WgpuFormat{ wgpu::TextureFormat::Undefined };
+    uint32_t m_BytesPerBlock{ 0 };   // Number of bytes per compressed block
+    uint32_t m_BlockTexelWidth{ 0 }; // Width/height of a block in texels
+    FileExtension m_Extension;       // File extension associated with the texture format
+    FourCC m_HeaderFourcc;           // FourCC code used in the texture header to identify the format
 };
 
 constexpr TextureFormat
@@ -221,9 +261,9 @@ TextureFormat::GetFormat(const wgpu::TextureFormat wgpuTextureFormat)
 {
     switch(wgpuTextureFormat)
     {
-        case GetRGBA().WgpuFormat:
+        case GetRGBA().m_WgpuFormat:
             return GetRGBA();
-        case GetBC7().WgpuFormat:
+        case GetBC7().m_WgpuFormat:
             return GetBC7();
         default:
             return GetUnknown();
@@ -232,11 +272,11 @@ TextureFormat::GetFormat(const wgpu::TextureFormat wgpuTextureFormat)
 constexpr TextureFormat
 TextureFormat::GetFormat(const FourCC encodingId)
 {
-    if(encodingId == GetRGBA().HeaderFourcc)
+    if(encodingId == GetRGBA().m_HeaderFourcc)
     {
         return GetRGBA();
     }
-    if(encodingId == GetBC7().HeaderFourcc)
+    if(encodingId == GetBC7().m_HeaderFourcc)
     {
         return GetBC7();
     }
@@ -247,11 +287,11 @@ TextureFormat::GetFormat(const FourCC encodingId)
 constexpr TextureFormat
 TextureFormat::GetFormat(const TextureFormat::FileExtension fileExtension)
 {
-    if(fileExtension == GetRGBA().Extension)
+    if(fileExtension == GetRGBA().m_Extension)
     {
         return GetRGBA();
     }
-    if(fileExtension == GetBC7().Extension)
+    if(fileExtension == GetBC7().m_Extension)
     {
         return GetBC7();
     }
