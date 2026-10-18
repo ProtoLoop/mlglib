@@ -3,11 +3,70 @@
 #include "AssertHelper.h"
 #include "Result.h"
 #include "shaders/ShaderInterop.h"
+#include "TextureFormat.h"
 #include "Vertex.h"
 
 #include <string_view>
 #include <type_traits>
 #include <webgpu/webgpu_cpp.h>
+
+class GpuHelper;
+
+/// Owns a mapped staging buffer and metadata for creating a GPU texture.
+/// Create, move, commit, and destroy this object on the main thread.
+/// StageBytes() may run on a worker with exclusive access to the object and its
+/// mapped memory. That work must finish before moving, committing, or destroying it.
+///
+/// Commit() creates and returns the GPU texture, consumes the staging buffer,
+/// and invalidates all previously returned mapped spans.
+class GpuTextureStagingBuffer
+{
+public:
+    GpuTextureStagingBuffer() = delete;
+    ~GpuTextureStagingBuffer() = default;
+    GpuTextureStagingBuffer(const GpuTextureStagingBuffer&) = delete;
+    GpuTextureStagingBuffer& operator=(const GpuTextureStagingBuffer&) = delete;
+    GpuTextureStagingBuffer(GpuTextureStagingBuffer&&) = default;
+    GpuTextureStagingBuffer& operator=(GpuTextureStagingBuffer&&) = default;
+
+    /// Returns a span representing the mapped memory of the staging buffer.
+    Result<std::span<std::byte>> GetMappedRange();
+
+    /// Copies tightly packed mip levels, ordered from largest to smallest, into the
+    /// staging buffer. Source rows must not include upload-alignment padding.
+    /// Adds the required row padding separately for each mip level.
+    Result<> StageBytes(const std::span<const std::byte> srcBytes);
+
+    /// Commits staged bytes to the GPU texture.
+    /// Internally creates a command encoder and submits the resulting command buffer to the GPU.
+    /// After calling this function, the staging buffer's mapped memory is no longer valid.
+    Result<wgpu::Texture> Commit();
+
+    /// Commits staged bytes to the GPU texture using the provided command encoder.
+    /// The caller is responsible submitting the result command buffer to the GPU.
+    /// After calling this function, the staging buffer's mapped memory is no longer valid.
+    Result<wgpu::Texture> Commit(wgpu::CommandEncoder cmdEncoder);
+
+private:
+    friend class GpuHelper;
+
+    GpuTextureStagingBuffer(const GpuHelper& gpuHelper,
+        wgpu::Buffer stagingBuffer,
+        const uint32_t width,
+        const uint32_t height,
+        const uint32_t mipCount,
+        const TextureFormat& format,
+        const std::string_view name);
+
+    const GpuHelper* m_GpuHelper{ nullptr };
+    wgpu::Buffer m_StagingBuffer;
+    uint32_t m_Width{ 0 };
+    uint32_t m_Height{ 0 };
+    uint32_t m_MipCount{ 0 };
+    std::span<std::byte> m_MappedMemory;
+    TextureFormat m_Format;
+    InplaceString<> m_Name;
+};
 
 template<typename Tag>
 class GpuTextureTarget

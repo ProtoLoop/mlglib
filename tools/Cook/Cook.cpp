@@ -1,7 +1,6 @@
 
 #include "Defer.h"
 #include "GltfLoader.h"
-#include "GpuHelper.h"
 #include "Log.h"
 #include "ResourceBundle.h"
 #include "Result.h"
@@ -12,6 +11,7 @@
 #include "ThreadPool.h"
 #include "Timer.h"
 
+#include <algorithm>
 #include <bc7enc.h>
 #include <cstddef>
 #include <cstdint>
@@ -19,7 +19,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <initializer_list>
 #include <iostream>
 #include <latch>
 #include <limits>
@@ -28,6 +27,7 @@
 #include <span>
 #include <stb_image.h>
 #include <string_view>
+#include <sys/types.h>
 #include <system_error>
 #include <type_traits>
 #include <vector>
@@ -37,11 +37,9 @@
 
 namespace
 {
-//static_assert(std::is_trivially_copyable_v<TextureHeader>);
+// static_assert(std::is_trivially_copyable_v<TextureHeader>);
 static_assert(std::is_standard_layout_v<TextureHeader>);
-static_assert(sizeof(TextureHeader) == 24); // NOLINT(readability-magic-numbers)
-
-static_assert(GpuHelper::kNumTextureChannels == 4);
+static_assert(sizeof(TextureHeader) == 28); // NOLINT(readability-magic-numbers)
 
 struct StbImageDeleter
 {
@@ -56,42 +54,114 @@ struct StbImageDeleter
 
 using StbDataPtr = std::unique_ptr<stbi_uc, StbImageDeleter>;
 
-struct RawTexture
+class MipImage
 {
-    RawTexture(
-        const uint32_t width, const uint32_t height, const uint32_t channelCount, stbi_uc* pixels)
-        : Width(width),
-          Height(height),
-          ChannelCount(channelCount),
-          StbData(pixels)
+public:
+    MipImage() = delete;
+    ~MipImage() = default;
+    MipImage(const MipImage&) = delete;
+    MipImage& operator=(const MipImage&) = delete;
+    MipImage(MipImage&&) = default;
+    MipImage& operator=(MipImage&&) = default;
+
+    static Result<MipImage> Create(const uint32_t w,
+        const uint32_t h,
+        const TextureFormat& format,
+        std::vector<std::byte>&& bytes)
+    {
+        MLG_CHECK(!format.IsUnknown(), "Unknown texture format");
+        MLG_CHECKV(format.CheckDimensions(w, h, 1));
+        MLG_CHECK(!bytes.empty(), "Byte data cannot be empty");
+
+        return MipImage(w, h, format, std::move(bytes));
+    }
+
+    static Result<MipImage> Create(
+        const uint32_t w, const uint32_t h, const TextureFormat& format, StbDataPtr&& stbData)
+    {
+        MLG_CHECK(!format.IsUnknown(), "Unknown texture format");
+        MLG_CHECKV(format.CheckDimensions(w, h, 1));
+        MLG_CHECK(stbData, "Byte data cannot be empty");
+
+        return MipImage(w, h, format, std::move(stbData));
+    }
+
+    uint32_t GetWidth() const { return m_Width; }
+    uint32_t GetHeight() const { return m_Height; }
+    const TextureFormat& GetFormat() const { return m_Format; }
+    const std::span<std::byte>& GetBytes() const { return m_ByteSpan; }
+
+private:
+    MipImage(const uint32_t w,
+        const uint32_t h,
+        const TextureFormat& format,
+        std::vector<std::byte>&& bytes)
+        : m_Width(w),
+          m_Height(h),
+          m_Format(format),
+          m_Bytes(std::move(bytes)),
+          m_ByteSpan(m_Bytes)
     {
     }
 
-    std::span<const std::byte> GetBytes() const noexcept
+    MipImage(const uint32_t w, const uint32_t h, const TextureFormat& format, StbDataPtr&& stbData)
+        : m_Width(w),
+          m_Height(h),
+          m_Format(format),
+          m_StbData(std::move(stbData))
     {
-        const void* p = static_cast<void*>(StbData.get());
-        const size_t sizeofData = static_cast<size_t>(Width)
-            * static_cast<size_t>(Height)
-            * static_cast<size_t>(ChannelCount);
-        return std::span<const std::byte>(static_cast<const std::byte*>(p), sizeofData);
+        void* p = m_StbData.get();
+        const size_t size = static_cast<size_t>(w) * h * format.GetChannelCount();
+        m_ByteSpan = std::span<std::byte>(static_cast<std::byte*>(p), size);
     }
 
-    uint32_t Width{ 0 };
-    uint32_t Height{ 0 };
-    uint32_t ChannelCount{ 0 };
-    StbDataPtr StbData;
+    uint32_t m_Width;
+    uint32_t m_Height;
+    TextureFormat m_Format;
+    std::vector<std::byte> m_Bytes;
+    StbDataPtr m_StbData;
+    std::span<std::byte> m_ByteSpan;
 };
 
-struct CookedTexture
+class CookedTexture
 {
-    TextureFormat Format;
-    uint32_t Width{ 0 };
-    uint32_t Height{ 0 };
-    std::unique_ptr<std::vector<std::byte>> Bytes;
+public:
+    CookedTexture() = delete;
+    ~CookedTexture() = default;
+    CookedTexture(const CookedTexture&) = delete;
+    CookedTexture& operator=(const CookedTexture&) = delete;
+    CookedTexture(CookedTexture&&) = default;
+    CookedTexture& operator=(CookedTexture&&) = default;
+
+    CookedTexture(const uint32_t w,
+        const uint32_t h,
+        const uint32_t mipCount,
+        TextureFormat format,
+        BoundedVector<MipImage>&& mipmaps)
+        : m_Width(w),
+          m_Height(h),
+          m_MipCount(mipCount),
+          m_Format(format),
+          m_MipMaps(std::move(mipmaps))
+    {
+    }
+
+    uint32_t GetWidth() const noexcept { return m_Width; }
+    uint32_t GetHeight() const noexcept { return m_Height; }
+    uint32_t GetMipCount() const noexcept { return m_MipCount; }
+    TextureFormat GetFormat() const noexcept { return m_Format; }
+    std::span<const MipImage> GetMipMaps() const noexcept { return m_MipMaps; }
+
+private:
+    uint32_t m_Width{ 0 };
+    uint32_t m_Height{ 0 };
+    uint32_t m_MipCount{ 1 };
+    TextureFormat m_Format = TextureFormat::GetUnknown();
+    BoundedVector<MipImage> m_MipMaps;
 };
 
 /// Command line arguments for the cook tool.
-struct CmdLinArgs
+struct CmdLineArgs
 {
     const char* InputFile{ nullptr };
     const char* OutputDir{ nullptr };
@@ -106,7 +176,7 @@ struct CookDirs
     std::filesystem::path OutputDir;
 
     /// Creates a CookDirs instance from command line arguments.
-    static Result<CookDirs> FromArgs(const CmdLinArgs& args);
+    static Result<CookDirs> FromArgs(const CmdLineArgs& args);
 };
 
 /// Parameters for a worker that cooks a texture.
@@ -125,10 +195,10 @@ Usage()
 }
 
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-CmdLinArgs
+CmdLineArgs
 ParseArgs(int argc, char** argv)
 {
-    CmdLinArgs args;
+    CmdLineArgs args;
     for(int i = 1; i < argc; ++i)
     {
         if(strcmp(argv[i], "-i") == 0 && i + 1 < argc)
@@ -145,7 +215,7 @@ ParseArgs(int argc, char** argv)
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 
 Result<CookDirs>
-CookDirs::FromArgs(const CmdLinArgs& args)
+CookDirs::FromArgs(const CmdLineArgs& args)
 {
     std::filesystem::path inDir = args.InputFile;
     inDir = inDir.parent_path();
@@ -189,24 +259,10 @@ CookDirs::FromArgs(const CmdLinArgs& args)
         };
 }
 
-/// Aligns the given value up to the specified alignment.
-[[maybe_unused]]
-uint32_t
-AlignUp(uint32_t value, uint32_t alignment)
-{
-    MLG_ABORTIF(alignment == 0, "Alignment must be non-zero");
-
-    constexpr uint32_t kMaxValue = std::numeric_limits<uint32_t>::max();
-
-    MLG_ABORTIF(value > kMaxValue - (alignment - 1), "Value overflow on alignment");
-
-    return (value + (alignment - 1)) & ~(alignment - 1);
-}
-
 using ByteSpan = std::span<const std::byte>;
 
 Result<>
-WriteFile(const std::filesystem::path& path, std::initializer_list<ByteSpan> byteSpans)
+WriteFile(const std::filesystem::path& path, std::span<ByteSpan> byteSpans)
 {
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
     MLG_CHECKV(stream.is_open(), "Failed to open output file: {}", path.string());
@@ -229,7 +285,7 @@ WriteFile(const std::filesystem::path& path, std::initializer_list<ByteSpan> byt
     return Result<>::Ok;
 }
 
-Result<RawTexture>
+Result<MipImage>
 LoadRawTexture(const CookDirs& cookDirs, const std::string_view texturePath)
 {
     MLG_INFO("Loading image: {}...", texturePath);
@@ -264,7 +320,7 @@ LoadRawTexture(const CookDirs& cookDirs, const std::string_view texturePath)
 
     stream.close();
 
-    constexpr int kDesiredChannels = GpuHelper::kNumTextureChannels;
+    constexpr int kDesiredChannels = TextureFormat::kDefaultChannelCount;
 
     int imgWidth = 0, imgHeight = 0, imgChannelsInFile = 0;
     const int len = static_cast<int>(fileData.size());
@@ -278,81 +334,145 @@ LoadRawTexture(const CookDirs& cookDirs, const std::string_view texturePath)
 
     MLG_CHECKV(imgData, "Failed to decode image: {}", stbi_failure_reason());
 
-    // Construct the RawTexture structure from the loaded image data NOW
-    // so if we early exit due to error the stb image data will be freed.
-    RawTexture rawTexture(static_cast<uint32_t>(imgWidth),
-        static_cast<uint32_t>(imgHeight),
-        static_cast<uint32_t>(kDesiredChannels),
-        imgData);
+    StbDataPtr stbData(imgData);
 
-    // Free the memory used by the original image data.
-    std::vector<char>().swap(fileData);
+    const uint32_t uImgWidth = static_cast<uint32_t>(imgWidth);
+    const uint32_t uImgHeight = static_cast<uint32_t>(imgHeight);
 
-    MLG_CHECKV(rawTexture.ChannelCount > 0,
-        "Invalid number of image channels: {}",
-        rawTexture.ChannelCount);
-
-    MLG_CHECK(TextureHeader::CheckDimensions(rawTexture.Width, rawTexture.Height),
+    MLG_CHECKV(imgWidth > 0 && imgHeight > 0,
         "Invalid image dimensions: {}x{}",
-        rawTexture.Width,
-        rawTexture.Height);
+        imgWidth,
+        imgHeight);
 
-    return std::move(rawTexture);
+    return MipImage::Create(uImgWidth, uImgHeight, TextureFormat::GetRGBA(), std::move(stbData));
 }
 
-Result<CookedTexture>
-EncodeBC7(const RawTexture& rawTexture, const std::string_view texturePath)
+Result<MipImage>
+Resize(const MipImage& mipImage,
+    const uint32_t newWidth,
+    const uint32_t newHeight,
+    const std::string_view texturePath)
 {
+    const TextureFormat& format = mipImage.GetFormat();
+
+    MLG_CHECKV(format.CheckDimensions(newWidth, newHeight, 1));
+    MLG_CHECKV(newWidth != mipImage.GetWidth() || newHeight != mipImage.GetHeight(),
+        "New dimensions must be different from the original dimensions");
+
+    const size_t byteCount = static_cast<size_t>(newWidth) * newHeight * format.GetChannelCount();
+
+    std::vector<std::byte> mipBytes(byteCount);
+
+    const void* srcP = mipImage.GetBytes().data();
+    void* dstP = mipBytes.data();
+
+    const unsigned char* result = stbir_resize_uint8_srgb(static_cast<const stbi_uc*>(srcP),
+        static_cast<int>(mipImage.GetWidth()),
+        static_cast<int>(mipImage.GetHeight()),
+        static_cast<int>(mipImage.GetWidth() * format.GetChannelCount()),
+        static_cast<stbi_uc*>(dstP),
+        static_cast<int>(newWidth),
+        static_cast<int>(newHeight),
+        static_cast<int>(newWidth * format.GetChannelCount()),
+        STBIR_RGBA);
+
+    MLG_CHECK(result, "Failed to resize image: {}", texturePath);
+
+    return MipImage::Create(newWidth, newHeight, format, std::move(mipBytes));
+}
+
+/// Resizes the mip image to match the block alignment requirements of the texture format.
+/// If no resizing is necessary, the original image is left unchanged and `resizedImage` remains
+/// empty.
+Result<>
+ResizeToBlockAlignment(const MipImage& mipImage,
+    const TextureFormat& format,
+    const std::string_view texturePath,
+    std::optional<MipImage>& resizedImage)
+{
+    resizedImage.reset();
+
+    const size_t blocksPerRow = format.GetBlocksPerRow(mipImage.GetWidth());
+    const size_t blockRowCount = format.GetBlockRowCount(mipImage.GetHeight());
+
+    const size_t blockDimension = format.GetBlockDimension();
+
+    const uint32_t blockAlignedWidth = static_cast<uint32_t>(blocksPerRow * blockDimension);
+    const uint32_t blockAlignedHeight = static_cast<uint32_t>(blockRowCount * blockDimension);
+
+    // If necessary resize the image so its dimensions are multiples of the block size.
+    if(blockAlignedWidth != mipImage.GetWidth() || blockAlignedHeight != mipImage.GetHeight())
+    {
+        auto resizeResult = Resize(mipImage, blockAlignedWidth, blockAlignedHeight, texturePath);
+        MLG_CHECK(resizeResult, "Failed to resize image: {}", texturePath);
+
+        resizedImage.emplace(std::move(*resizeResult));
+    }
+
+    return Result<>::Ok;
+}
+
+// Generates mipmaps for a raw texture and returns them as a vector of byte arrays.
+Result<BoundedVector<MipImage>>
+MakeMipMaps(const MipImage& baseImage, const std::string_view texturePath)
+{
+    const uint32_t mipCount =
+        TextureFormat::GetMipCount(baseImage.GetWidth(), baseImage.GetHeight());
+
+    const MipImage* prevImage = &baseImage;
+
+    BoundedVector<MipImage> mipmaps(mipCount - 1);
+
+    for(uint32_t mip = 1; mip < mipCount; ++mip)
+    {
+        const uint32_t mipWidth = std::max(prevImage->GetWidth() >> 1, 1u);
+        const uint32_t mipHeight = std::max(prevImage->GetHeight() >> 1, 1u);
+
+        auto resizeResult = Resize(*prevImage, mipWidth, mipHeight, texturePath);
+        MLG_CHECK(resizeResult, "Failed to resize image: {}", texturePath);
+
+        mipmaps.emplace_back(std::move(*resizeResult));
+
+        prevImage = &mipmaps.back();
+    }
+
+    return std::move(mipmaps);
+}
+
+// Encodes an image as BC7.
+Result<MipImage>
+EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
+{
+    constexpr uint32_t kChannelCount = 4;
+    constexpr uint32_t kBlockPixelDimension = 4;
+
+    const TextureFormat& bc7Format = TextureFormat::GetBC7();
+
     MLG_INFO("Encoding {} -> BC7...", texturePath);
 
-    const size_t widthSz = static_cast<size_t>(rawTexture.Width);
-    const size_t heightSz = static_cast<size_t>(rawTexture.Height);
+    const size_t blocksPerRow = bc7Format.GetBlocksPerRow(srcMip.GetWidth());
+    const size_t blockRowCount = bc7Format.GetBlockRowCount(srcMip.GetHeight());
 
-    std::span<const std::byte> rgba = rawTexture.GetBytes();
+    const uint32_t blockAlignedWidth = static_cast<uint32_t>(blocksPerRow * kBlockPixelDimension);
+    const uint32_t blockAlignedHeight = static_cast<uint32_t>(blockRowCount * kBlockPixelDimension);
 
-    MLG_CHECK(widthSz > 0 && heightSz > 0, "Invalid image dimensions: {}x{}", widthSz, heightSz);
-    MLG_CHECK(rgba.size() / widthSz >= 4, "Invalid RGBA buffer size: {}", rgba.size());
-    MLG_CHECK(rgba.size() / (widthSz * 4) >= heightSz, "Invalid RGBA buffer size: {}", rgba.size());
-    MLG_CHECKV(rgba.size() == widthSz * heightSz * 4, "Invalid RGBA buffer size: {}", rgba.size());
+    const uint32_t srcWidth = srcMip.GetWidth();
+    const uint32_t srcHeight = srcMip.GetHeight();
 
-    const size_t blocksWide = (widthSz + 3) / 4;
-    const size_t blocksHigh = (heightSz + 3) / 4;
-    const size_t finalWidth = blocksWide * 4;
-    const size_t finalHeight = blocksHigh * 4;
+    /*// Allocate memory for the compressed BC7 texture data.
+    // Size includes padding so it can be directly used for GPU uploads.
+    const size_t outputByteCount = bc7Format.GetPaddedSizeofData(srcWidth,
+        srcHeight,
+        GpuHelper::kTextureStrideAlignment);
+    const size_t dstRowStride =
+        bc7Format.GetPaddedBytesPerRow(blockAlignedWidth, GpuHelper::kTextureStrideAlignment);*/
 
-    std::vector<std::byte> resizedRgba;
+    const size_t outputByteCount = bc7Format.GetSizeofData(srcWidth, srcHeight);
+    const size_t dstRowStride = bc7Format.GetBytesPerRow(blockAlignedWidth);
 
-    if(finalWidth != widthSz || finalHeight != heightSz)
-    {
-        resizedRgba.resize(finalWidth * finalHeight * 4);
+    std::vector<std::byte> outputBytes(outputByteCount);
 
-        const void* srcP = rgba.data();
-        void* dstP = resizedRgba.data();
-
-        const unsigned char* result = stbir_resize_uint8_srgb(static_cast<const stbi_uc*>(srcP),
-            static_cast<int>(widthSz),
-            static_cast<int>(heightSz),
-            static_cast<int>(widthSz * 4),
-            static_cast<stbi_uc*>(dstP),
-            static_cast<int>(finalWidth),
-            static_cast<int>(finalHeight),
-            static_cast<int>(finalWidth * 4),
-            STBIR_RGBA);
-
-        MLG_CHECK(result, "Failed to resize image: {}", texturePath);
-        
-        rgba = std::span<const std::byte>(resizedRgba);
-    }
-    constexpr size_t kBytesPerBlock = 16;
-    constexpr size_t kMaxSizeofVector = std::vector<std::byte>().max_size();
-
-    MLG_CHECK(kMaxSizeofVector / (blocksWide * blocksHigh) >= kBytesPerBlock,
-        "Number of output bytes exceeds maximum vector size");
-
-    // BC7 always uses 16 bytes per 4x4 block.
-    std::vector<std::byte> bc7Bytes(blocksWide * blocksHigh * kBytesPerBlock);
-
-    const std::span<std::byte> bc7ByteSpan(bc7Bytes);
+    // Compress.
 
     // Call once before using the encoder.
     static std::once_flag bc7enc_init_flag;
@@ -361,52 +481,126 @@ EncodeBC7(const RawTexture& rawTexture, const std::string_view texturePath)
     bc7enc_compress_block_params params{};
     bc7enc_compress_block_params_init(&params);
 
-    // A temporary tightly packed 4x4 RGBA block.
-    std::byte blockPixels[4 * 4 * 4];
+    const size_t srcRowStride = static_cast<size_t>(srcWidth) * kChannelCount;
+    const std::span<const std::byte> srcBytes = srcMip.GetBytes();
+    std::span dstBytes = outputBytes;
 
-    for(size_t blockY = 0; blockY < blocksHigh; ++blockY)
+    std::byte blockPixels[kBlockPixelDimension][kBlockPixelDimension * kChannelCount];
+
+    for(uint32_t blockY = 0; blockY < blockRowCount; ++blockY)
     {
-        for(size_t blockX = 0; blockX < blocksWide; ++blockX)
+        const uint32_t srcY = blockY * kBlockPixelDimension;
+        size_t dstRowOffset = 0;
+
+        for(uint32_t blockX = 0; blockX < blocksPerRow;
+            ++blockX, dstRowOffset += bc7Format.GetBytesPerBlock())
         {
-            for(size_t y = 0; y < 4; ++y)
+            const uint32_t srcX = blockX * kBlockPixelDimension;
+
+            const bool isFullBlock =
+                srcWidth - srcX >= kBlockPixelDimension && srcHeight - srcY >= kBlockPixelDimension;
+
+            if(isFullBlock)
             {
-                for(size_t x = 0; x < 4; ++x)
+                size_t srcOffset = (static_cast<size_t>(srcY) * srcRowStride)
+                    + (static_cast<size_t>(srcX) * kChannelCount);
+
+                std::copy_n(srcBytes.subspan(srcOffset).data(),
+                    kBlockPixelDimension * kChannelCount,
+                    &blockPixels[0][0]);
+
+                srcOffset += srcRowStride;
+                std::copy_n(srcBytes.subspan(srcOffset).data(),
+                    kBlockPixelDimension * kChannelCount,
+                    &blockPixels[1][0]);
+
+                srcOffset += srcRowStride;
+                std::copy_n(srcBytes.subspan(srcOffset).data(),
+                    kBlockPixelDimension * kChannelCount,
+                    &blockPixels[2][0]);
+
+                srcOffset += srcRowStride;
+                std::copy_n(srcBytes.subspan(srcOffset).data(),
+                    kBlockPixelDimension * kChannelCount,
+                    &blockPixels[3][0]);
+            }
+            else
+            {
+                for(uint32_t y = 0; y < kBlockPixelDimension; ++y)
                 {
-                    // Clamp partial blocks at the image edges.
-                    const size_t sourceX = std::min((blockX * 4) + x, finalWidth - 1);
-                    const size_t sourceY = std::min((blockY * 4) + y, finalHeight - 1);
+                    const uint32_t sourceY = std::min(srcY + y, srcHeight - 1);
 
-                    const std::size_t sourceOffset = ((sourceY * finalWidth) + sourceX) * 4;
+                    size_t dstOffset = 0;
 
-                    const std::size_t blockOffset = ((y * 4) + x) * 4;
+                    for(uint32_t x = 0; x < kBlockPixelDimension; ++x, dstOffset += kChannelCount)
+                    {
+                        const uint32_t sourceX = std::min(srcX + x, srcWidth - 1);
+                        const size_t srcOffset = (static_cast<size_t>(sourceY) * srcRowStride)
+                            + (static_cast<size_t>(sourceX) * kChannelCount);
 
-                    std::copy_n(rgba.subspan(sourceOffset).data(), 4, &blockPixels[blockOffset]);
+                        std::copy_n(srcBytes.subspan(srcOffset).data(),
+                            kChannelCount,
+                            &blockPixels[y][dstOffset]);
+                    }
                 }
             }
 
-            const std::size_t outputOffset = ((blockY * blocksWide) + blockX) * 16;
-
-            // The return value means “block contains transparency”;
-            // it is not a success/failure result.
-            bc7enc_compress_block(bc7ByteSpan.subspan(outputOffset).data(),
-                &blockPixels[0],
-                &params);
+            // The return value indicates transparency, not success or failure.
+            bc7enc_compress_block(&dstBytes[dstRowOffset], &blockPixels[0], &params);
         }
+
+        dstBytes = dstBytes.subspan(dstRowStride);
     }
 
-    return CookedTexture //
-        {
-            .Format = TextureFormat::GetBC7(),
-            .Width = static_cast<uint32_t>(finalWidth),
-            .Height = static_cast<uint32_t>(finalHeight),
-            .Bytes = std::make_unique<std::vector<std::byte>>(std::move(bc7Bytes)),
-        };
+    return MipImage::Create(static_cast<uint32_t>(blockAlignedWidth),
+        static_cast<uint32_t>(blockAlignedHeight),
+        bc7Format,
+        std::move(outputBytes));
+}
+Result<CookedTexture>
+CreateBc7MipChain(const MipImage& srcImage, const std::string_view texturePath)
+{
+    const MipImage* baseMip = &srcImage;
+
+    // If necessary resize the image so its dimensions are multiples of the block size.
+    std::optional<MipImage> resizedImage;
+    auto resizeResult =
+        ResizeToBlockAlignment(*baseMip, TextureFormat::GetBC7(), texturePath, resizedImage);
+    MLG_CHECK(resizeResult, "Failed to resize image to block alignment: {}", texturePath);
+
+    if(resizedImage)
+    {
+        baseMip = &resizedImage.value();
+    }
+
+    auto mipmapsResult = MakeMipMaps(*baseMip, texturePath);
+    MLG_CHECK(mipmapsResult, "Failed to generate mipmaps for texture: {}", texturePath);
+
+    BoundedVector<MipImage> mipmaps(mipmapsResult->size() + 1);
+
+    auto bc7Result = EncodeBC7Mip(*baseMip, texturePath);
+    MLG_CHECK(bc7Result, "Failed to encode BC7 mip level for texture: {}", texturePath);
+
+    mipmaps.emplace_back(std::move(*bc7Result));
+
+    for(const MipImage& mip : *mipmapsResult)
+    {
+        bc7Result = EncodeBC7Mip(mip, texturePath);
+        MLG_CHECK(bc7Result, "Failed to encode BC7 mip level for texture: {}", texturePath);
+        mipmaps.emplace_back(std::move(*bc7Result));
+    }
+
+    return CookedTexture(mipmaps.front().GetWidth(),
+        mipmaps.front().GetHeight(),
+        static_cast<uint32_t>(mipmaps.size()),
+        TextureFormat::GetBC7(),
+        std::move(mipmaps));
 }
 
 Result<>
 WriteTexture(const CookDirs& cookDirs,
     const std::string_view texturePath,
-    const std::span<const CookedTexture> cookedTextures)
+    const CookedTexture& cookedTexture)
 {
     const std::filesystem::path srcPath = (cookDirs.InputDir / texturePath);
     const std::filesystem::path dstPath = (cookDirs.OutputDir / texturePath);
@@ -427,24 +621,31 @@ WriteTexture(const CookDirs& cookDirs,
         dstPath.string(),
         ec.message());
 
-    for(const CookedTexture& cookedTexture : cookedTextures)
+    const TextureHeader header(cookedTexture.GetWidth(),
+        cookedTexture.GetHeight(),
+        cookedTexture.GetMipCount(),
+        cookedTexture.GetFormat().GetHeaderFourcc());
+
+    std::vector<ByteSpan> byteSpans;
+    byteSpans.reserve(1 + cookedTexture.GetMipMaps().size());
+
+    const std::span<const std::byte> headerSpan = std::as_bytes(std::span(&header, 1));
+
+    byteSpans.emplace_back(headerSpan);
+
+    for(const MipImage& mip : cookedTexture.GetMipMaps())
     {
-        const TextureHeader header(cookedTexture.Width,
-            cookedTexture.Height,
-            cookedTexture.Format.GetHeaderFourcc());
-
-        const std::span<const std::byte> headerSpan = std::as_bytes(std::span(&header, 1));
-        const std::span<const std::byte> imageDataSpan =
-            std::span(cookedTexture.Bytes->data(), cookedTexture.Bytes->size());
-
-        std::filesystem::path curDstPath = dstPath;
-
-        curDstPath.replace_extension(cookedTexture.Format.GetExtension().AsStringView());
-
-        MLG_INFO("Writing: {} -> {}...", srcPath.string(), curDstPath.string());
-
-        MLG_CHECK(WriteFile(curDstPath, { headerSpan, imageDataSpan }));
+        const std::span<const std::byte> mipBytes = mip.GetBytes();
+        byteSpans.emplace_back(mipBytes);
     }
+
+    std::filesystem::path curDstPath = dstPath;
+
+    curDstPath.replace_extension(cookedTexture.GetFormat().GetExtension().AsStringView());
+
+    MLG_INFO("Writing: {} -> {}...", srcPath.string(), curDstPath.string());
+
+    MLG_CHECK(WriteFile(curDstPath, byteSpans));
 
     return Result<>::Ok;
 }
@@ -458,17 +659,10 @@ CookTexture(CookTextureWorkerParams& params)
     auto rawImageResult = LoadRawTexture(params.CookDirs, params.TexturePath);
     MLG_CHECK(rawImageResult);
 
-    MLG_CHECK(rawImageResult->ChannelCount == 4,
-        "Expected 4 channels in the raw image data for texture: {}",
-        params.TexturePath);
-
-    auto bc7Result = EncodeBC7(*rawImageResult, params.TexturePath);
+    auto bc7Result = CreateBc7MipChain(*rawImageResult, params.TexturePath);
     MLG_CHECK(bc7Result, "Failed to encode BC7 texture: {}", params.TexturePath);
 
-    const CookedTexture cookedTextures[] //
-        { std::move(*bc7Result) };
-
-    MLG_CHECK(WriteTexture(params.CookDirs, params.TexturePath, cookedTextures));
+    MLG_CHECK(WriteTexture(params.CookDirs, params.TexturePath, *bc7Result));
 
     MLG_INFO("Cooked texture: {} in {} ms", params.TexturePath, timer.GetElapsedSeconds());
 
@@ -487,7 +681,7 @@ CookTextureWorker(void* arg)
     }
 }
 
-[[maybe_unused]] Result<>
+Result<>
 WriteResourceBundle(const CookDirs& cookDirs,
     const std::string_view inputFile,
     const ResourceBundle& resourceBundle)
@@ -496,8 +690,8 @@ WriteResourceBundle(const CookDirs& cookDirs,
     std::filesystem::path outputFilePath = cookDirs.OutputDir / inPath.filename();
     outputFilePath.replace_extension(".bin");
 
-    const std::span<const std::byte> buffer = resourceBundle.GetBuffer();
-    MLG_CHECK(WriteFile(outputFilePath, { buffer }));
+    ByteSpan byteSpans[] = { resourceBundle.GetBuffer() };
+    MLG_CHECK(WriteFile(outputFilePath, byteSpans));
 
     MLG_INFO("Wrote resource bundle: {}", outputFilePath.string());
 
@@ -505,7 +699,7 @@ WriteResourceBundle(const CookDirs& cookDirs,
 }
 
 Result<>
-Cook(const CmdLinArgs& args, ThreadPool& threadPool)
+Cook(const CmdLineArgs& args, ThreadPool& threadPool)
 {
     Timer timer;
     timer.Start();
@@ -520,10 +714,10 @@ Cook(const CmdLinArgs& args, ThreadPool& threadPool)
     const SceneDef sceneDef = std::move(*loadResult);
 
     ResourceBundleBuilder builder;
-    const ResourceBundleBuilder::Options options//
-    {
-        .TextureEncodings = TextureResourceEncoding::All,
-    };
+    const ResourceBundleBuilder::Options options //
+        {
+            .TextureEncodings = TextureResourceEncoding::All,
+        };
 
     auto buildResult = builder.Build(sceneDef, options);
     MLG_CHECK(buildResult);
@@ -565,6 +759,8 @@ Cook(const CmdLinArgs& args, ThreadPool& threadPool)
             };
 
         CookTextureWorkerParams& params = cookTextureParams.emplace_back(tmpParams);
+
+        // CookTextureWorker(&params);
 
         if(!threadPool.Enqueue(CookTextureWorker, &params))
         {
@@ -612,7 +808,7 @@ main(int argc, char** argv)
     }
     MLG_INFO("Current working directory: {}", cwd.string());
 
-    const CmdLinArgs args = ParseArgs(argc, argv);
+    const CmdLineArgs args = ParseArgs(argc, argv);
 
     const Result<> result = Cook(args, threadPool);
     if(!result)

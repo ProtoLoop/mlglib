@@ -384,8 +384,9 @@ set(SSG_SOURCES
   src/GltfLoader.cpp
   src/GpuColorPass.cpp
   src/GpuCompositorPass.cpp
-  src/GpuTransformPass.cpp
   src/GpuHelper.cpp
+  src/GpuTransformPass.cpp
+  src/GpuTypes.cpp
   src/ImGuiRenderer.cpp
   src/InputMapper.cpp
   src/Level.cpp
@@ -400,6 +401,7 @@ set(SSG_SOURCES
   src/stb_image.cpp
   src/System.cpp
   src/TextureFetcher.cpp
+  src/TextureFormat.cpp
   src/TextureLoader.cpp
   src/ThreadPool.cpp
   src/Timer.cpp
@@ -421,8 +423,8 @@ set(SSG_HEADERS
   src/GltfLoader.h
   src/GpuColorPass.h
   src/GpuCompositorPass.h
-  src/GpuTransformPass.h
   src/GpuHelper.h
+  src/GpuTransformPass.h
   src/GpuTypes.h
   src/ImGuiRenderer.h
   src/inlist.h

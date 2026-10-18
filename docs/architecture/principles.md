@@ -19,8 +19,14 @@ just to reuse code or give several classes the same shape.
 
 ## Make invalid states unrepresentable
 
-Prefer types whose instances are always valid. Enforce their rules during
-construction and preserve those rules in any operation that changes the value.  For example, a move operation should not leave one of these types unusable.  Either delete the move operations, or shunt move ops to copy ops.
+Construct objects in a valid state and preserve their invariants throughout
+their lifetime. Define which operations are allowed in each state.
+
+Types that promise to remain usable should preserve that promise when copied
+or moved. Resource owners may instead transfer ownership or consume a resource,
+leaving a defined empty state. Document that state and prevent operations that
+require the missing resource. Do not copy ownership merely to keep the source
+object usable.
 
 ## C-like C++
 

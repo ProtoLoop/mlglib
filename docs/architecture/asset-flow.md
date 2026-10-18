@@ -67,19 +67,36 @@ glTF, or loads cooked resource bundles. [`Scene`](../../src/Scene.cpp) creates
 runtime nodes and physics, and [`View`](../../src/View.cpp) creates GPU resources.
 
 The [Cook tool](../../tools/Cook/Cook.cpp) writes resource bundles and separate
-BC7 texture files with a `.bc7` extension. It also copies the original PNG/JPG
-files for devices without BC7 support.
+compressed texture files. It also copies the original PNG/JPG files for devices
+without support for the available compressed formats. No mipmaps are generated
+for these PNG/JPEG files.  Mipmaps are only generated for cooked/compressed textures.
 
-Before compression, the cooker resizes images whose dimensions are not multiples
-of four, rounding each dimension up to the next multiple. The cooked header
-records the resized dimensions.
+Before generating mipmaps, the cooker resizes the base image to satisfy the
+selected compression format’s block dimensions, rounding up where necessary.
+It then generates a full mip chain down to 1×1 and compresses each level.
+Partial blocks in smaller levels repeat edge pixels instead of rescaling the
+image.
 
-The Cook tool marks BC7 as available when building the bundle. Bundles built
+Each cooked texture file contains a header with the base dimensions, format,
+and mip count, followed by tightly packed mip levels from largest to smallest.
+The file does not include GPU upload-row padding.
+
+At runtime, texture-loading workers copy the mip data into mapped staging
+memory, adding the required row padding for each level. The main thread creates
+the GPU texture and records the copies for all levels.
+
+Currently supported compression formats:
+
+- BC7
+
+The Cook tool marks the generated encodings as available when building the bundle. Bundles built
 directly from scene definitions or glTF use the default flags, which indicate no
 additional encodings.
 
-[TextureLoader](../../src/TextureLoader.cpp) selects the `.bc7` file only when the
-resource advertises BC7 and the device supports it. Otherwise, it loads the
-original image, which is decoded at runtime.
+[TextureLoader](../../src/TextureLoader.cpp) selects a compressed file only when the
+resource advertises its encoding and the device supports it.
+If the GPU supports none of the available compression formats, or no compressed
+encoding is available, it uses the original PNG/JPEG file. The image is decoded
+at runtime and uploaded without mipmaps (only the base level).
 [TextureFetcher](../../src/TextureFetcher.cpp) manages the collection of
 texture-loading tasks.

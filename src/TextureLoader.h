@@ -3,6 +3,7 @@
 #include "CoopTask.h"
 #include "FileFetcher.h"
 #include "FilePath.h"
+#include "GpuTypes.h"
 #include "TextureFormat.h"
 
 #include <atomic>
@@ -18,40 +19,6 @@ namespace wgpu
 {
 class CommandEncoder;
 }
-
-/// Header for a cooked texture file.
-struct TextureHeader
-{
-    static constexpr TextureFormat::FourCC kMagic0{ 'M', 'L', 'G', ' ' };
-    static constexpr TextureFormat::FourCC kMagic1{ 'T', 'E', 'X', ' ' };
-    static constexpr uint32_t kVersion = 1;
-
-    static constexpr uint32_t kMaxImageWidth = 4096;
-    static constexpr uint32_t kMaxImageHeight = 4096;
-
-    /// Checks if the texture dimensions are within the allowed limits.
-    static Result<> CheckDimensions(const uint32_t width, const uint32_t height);
-
-    static Result<> ValidateFile(const std::span<const std::byte> fileBuffer);
-
-    static_assert(sizeof(TextureFormat::FourCC) == 4, "Fourcc must be 4 bytes in size");
-
-    TextureHeader(const uint32_t width, const uint32_t height, const TextureFormat::FourCC fourCC)
-        : Width(width),
-          Height(height),
-          FourCC(fourCC)
-    {
-    }
-
-    // NOLINTBEGIN(cppcoreguidelines-avoid-const-or-ref-data-members)
-    const TextureFormat::FourCC Magic0{ kMagic0 };
-    const TextureFormat::FourCC Magic1{ kMagic1 };
-    const uint32_t Version{ kVersion };
-    const uint32_t Width{ 0 };
-    const uint32_t Height{ 0 };
-    const TextureFormat::FourCC FourCC;
-    // NOLINTEND(cppcoreguidelines-avoid-const-or-ref-data-members)
-};
 
 /// Loader for textures. Handles loading from memory, files, and resource bundles.
 class TextureLoader : public ICoopTask<>
@@ -108,14 +75,6 @@ private:
 
     void OnUpdate() override;
 
-    static Result<> CopyBytesToStagingBuffer(const uint32_t width,
-        const uint32_t height,
-        const std::span<const std::byte> srcBytes,
-        std::span<std::byte> dstBytes,
-        const TextureFormat& format);
-
-    Result<> CopyBytesToStagingBuffer(const std::span<const std::byte> srcBytes);
-
     Result<> Commit();
 
     Result<> BeginDecode();
@@ -131,14 +90,14 @@ private:
     ThreadPool* m_ThreadPool{ nullptr };
     uint32_t m_Width{ 0 };
     uint32_t m_Height{ 0 };
+    uint32_t m_MipCount{ 1 };
     TextureFormat m_Format = TextureFormat::GetUnknown();
     std::optional<FilePath> m_Path;
     FetchRequestId m_FetchRequestId;
-    wgpu::Buffer m_StagingBuffer{ nullptr };
-    std::span<std::byte> m_MappedMemory;
+    std::optional<GpuTextureStagingBuffer> m_StagingBuffer;
+    wgpu::Texture m_Texture{ nullptr };
     std::vector<std::byte> m_FileBytes; // Raw file data for the texture
     wgpu::CommandEncoder m_CommandEncoder{ nullptr };
-    wgpu::Texture m_Texture{ nullptr };
     Result<> m_DecodeResult;
     std::atomic<bool> m_DecodeCompletionFlag{ false };
 

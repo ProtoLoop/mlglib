@@ -30,6 +30,16 @@ constexpr ActionMapping actionMappings[] //
             .Scale = 1,
         },
         {
+            .ActionId = CommonActionIds::MoveUp,
+            .Trigger = InputButton::KeyHeld(SDL_SCANCODE_UP),
+            .Scale = 1,
+        },
+        {
+            .ActionId = CommonActionIds::MoveDown,
+            .Trigger = InputButton::KeyHeld(SDL_SCANCODE_DOWN),
+            .Scale = -1,
+        },
+        {
             .ActionId = CommonActionIds::LookLeftRight,
             .Trigger = InputAxis::MouseMoveX(),
             .Scale = CameraActor::kDefaultRotPerMouseMove,
@@ -75,6 +85,14 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveRight, actionValue))
     {
         moveDelta += m_CurrentTransform.R * Vec3f(actionValue, 0, 0);
+    }
+    if(inputMapper.IsActionTriggered(CommonActionIds::MoveUp, actionValue))
+    {
+        moveDelta += m_CurrentTransform.R * Vec3f(0, actionValue, 0);
+    }
+    if(inputMapper.IsActionTriggered(CommonActionIds::MoveDown, actionValue))
+    {
+        moveDelta += m_CurrentTransform.R * Vec3f(0, actionValue, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveUpDown, actionValue))
     {

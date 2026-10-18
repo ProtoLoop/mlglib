@@ -17,9 +17,6 @@ class GpuHelper final
 public:
     /// The preferred texture format for render targets.
     static constexpr wgpu::TextureFormat kRenderTargetFormat = wgpu::TextureFormat::RGBA8Unorm;
-    /// The preferred texture format for general textures.
-    static constexpr wgpu::TextureFormat kTextureFormat = wgpu::TextureFormat::RGBA8UnormSrgb;
-    static constexpr size_t kNumTextureChannels = 4;
     static constexpr wgpu::TextureFormat kDepthBufferFormat = wgpu::TextureFormat::Depth24Plus;
 
     /// The alignment requirement for a row of texture data in bytes when uploading to the GPU.
@@ -50,12 +47,6 @@ public:
     /// Resizes the swap chain to the given width and height.
     Result<> Resize(const uint32_t width, const uint32_t height);
 
-    /// Creates an empty texture with the given dimensions and name.
-    Result<wgpu::Texture> CreateTexture(const uint32_t width,
-        const uint32_t height,
-        const TextureFormat& format,
-        const std::string_view name) const;
-
     /// Creates a render target with the given dimensions and name.
     Result<GpuRenderTarget> CreateRenderTarget(
         const uint32_t width, const uint32_t height, const std::string_view name) const;
@@ -65,17 +56,11 @@ public:
         const uint32_t width, const uint32_t height, const std::string_view name) const;
 
     /// Creates a staging buffer for copying texture data to the GPU.
-    Result<wgpu::Buffer> CreateTextureStagingBuffer(const uint32_t width,
+    Result<GpuTextureStagingBuffer> CreateTextureStagingBuffer(const uint32_t width,
         const uint32_t height,
+        const uint32_t mipCount,
         const TextureFormat& format,
         const std::string_view name) const;
-
-    /// Commits the data in the staging buffer to texture memory on the GPU.
-    Result<> CommitTextureStagingBuffer(wgpu::Texture texture, wgpu::Buffer stagingBuffer) const;
-
-    /// Commits the data in the staging buffer to texture memory on the GPU.
-    static Result<> CommitTextureStagingBuffer(
-        wgpu::Texture texture, wgpu::Buffer stagingBuffer, wgpu::CommandEncoder cmdEncoder);
 
     /// Creates a vertex buffer with capacity for the given number of vertices.
     Result<GpuVertexBuffer> CreateVertexBuffer(const size_t count,
@@ -128,12 +113,6 @@ public:
     }
 
 private:
-    enum class BufferMappedState
-    {
-        Unmapped,
-        Mapped,
-    };
-
     GpuHelper(SDL_Window* window,
         SDL_MetalView metalView,
         wgpu::Instance instance,
@@ -142,13 +121,7 @@ private:
         wgpu::Surface surface,
         wgpu::TextureFormat surfaceFormat);
 
-    Result<wgpu::Buffer> CreateGpuBuffer(const wgpu::BufferUsage usage,
-        const size_t size,
-        BufferMappedState mappedState,
-        const std::string_view name) const;
-
-    Result<wgpu::Buffer> CreateIndirectBuffer(const size_t size,
-        const std::string_view name) const;
+    Result<wgpu::Buffer> CreateIndirectBuffer(const size_t size, const std::string_view name) const;
     Result<wgpu::Buffer> CreateStorageBuffer(const size_t size, const std::string_view name) const;
     Result<wgpu::Buffer> CreateUniformBuffer(const size_t size, const std::string_view name) const;
 

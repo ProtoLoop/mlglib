@@ -1,4 +1,3 @@
-#include <limits>
 #define MLG_LOGGER_NAME "WGPU"
 
 #include "GpuHelper.h"
@@ -7,9 +6,11 @@
 #include "Defer.h"
 
 #include <atomic>
+#include <limits>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_metal.h>
 #include <SDL3/SDL_video.h>
+#include <span>
 #include <string_view>
 
 #if !defined(EMSCRIPTEN)
@@ -35,6 +36,12 @@ constexpr std::pair<wgpu::FeatureName, const char*> kDesiredFeatures[] = //
         { wgpu::FeatureName::TextureCompressionETC2, "TextureCompressionETC2" },
         { wgpu::FeatureName::TextureCompressionASTC, "TextureCompressionASTC" },
     };
+
+enum class BufferMappedState
+{
+    Unmapped,
+    Mapped,
+};
 
 const char*
 GetPresentModeString(const wgpu::PresentMode presentMode)
@@ -321,6 +328,27 @@ ConfigureSurface(const wgpu::Adapter& adapter,
     return format;
 }
 
+Result<wgpu::Buffer>
+CreateGpuBuffer(const GpuHelper& gpuHelper,
+    const wgpu::BufferUsage usage,
+    const size_t size,
+    BufferMappedState mappedState,
+    const std::string_view name)
+{
+    const wgpu::BufferDescriptor bufferDesc //
+        {
+            .label = name,
+            .usage = usage,
+            .size = size,
+            .mappedAtCreation = (mappedState == BufferMappedState::Mapped),
+        };
+
+    wgpu::Buffer buffer = gpuHelper.GetDevice().CreateBuffer(&bufferDesc);
+    MLG_CHECK(buffer, "Failed to create GPU buffer");
+
+    return buffer;
+}
+
 Result<wgpu::Texture>
 CreateDefaultTexture(GpuHelper& gpuHelper)
 {
@@ -328,25 +356,20 @@ CreateDefaultTexture(GpuHelper& gpuHelper)
     constexpr size_t kDefaultTextureHeight = 128;
     constexpr RgbaColoru8 kDefaultTextureColor{ "#FF00FFFF"_rgba }; // Magenta
     constexpr TextureFormat kDefaultTextureFormat = TextureFormat::GetRGBA();
+    constexpr uint32_t kMipCount = 1;
 
-    auto texture = gpuHelper.CreateTexture(kDefaultTextureWidth,
+    auto texBufResult = gpuHelper.CreateTextureStagingBuffer(kDefaultTextureWidth,
         kDefaultTextureHeight,
-        kDefaultTextureFormat,
-        "DefaultTexture");
-
-    MLG_CHECK(texture);
-
-    auto stagingBuffer = gpuHelper.CreateTextureStagingBuffer(texture->GetWidth(),
-        texture->GetHeight(),
+        kMipCount,
         kDefaultTextureFormat,
         "DefaultTextureStagingBuffer");
-    MLG_CHECK(stagingBuffer);
+    MLG_CHECK(texBufResult);
 
-    void* mapped = stagingBuffer->GetMappedRange();
-    MLG_CHECK(mapped);
+    auto mappedRangeResult = texBufResult->GetMappedRange();
+    MLG_CHECK(mappedRangeResult);
 
-    const std::span<uint8_t> mappedSpan(static_cast<uint8_t*>(mapped),
-        static_cast<size_t>(stagingBuffer->GetSize()));
+    void* p = mappedRangeResult->data();
+    const std::span<uint8_t> mappedRange(static_cast<uint8_t*>(p), mappedRangeResult->size());
 
     const size_t dstRowStride = kDefaultTextureFormat.GetPaddedBytesPerRow(kDefaultTextureWidth,
         GpuHelper::kTextureStrideAlignment);
@@ -358,16 +381,14 @@ CreateDefaultTexture(GpuHelper& gpuHelper)
         for(size_t x = 0; x < kDefaultTextureWidth; ++x, offset += 4)
         {
             // Magenta
-            mappedSpan[offset + 0] = kDefaultTextureColor.r;
-            mappedSpan[offset + 1] = kDefaultTextureColor.g;
-            mappedSpan[offset + 2] = kDefaultTextureColor.b;
-            mappedSpan[offset + 3] = kDefaultTextureColor.a;
+            mappedRange[offset + 0] = kDefaultTextureColor.r;
+            mappedRange[offset + 1] = kDefaultTextureColor.g;
+            mappedRange[offset + 2] = kDefaultTextureColor.b;
+            mappedRange[offset + 3] = kDefaultTextureColor.a;
         }
     }
 
-    MLG_CHECK(gpuHelper.CommitTextureStagingBuffer(*texture, *stagingBuffer));
-
-    return *texture;
+    return texBufResult->Commit();
 }
 
 void
@@ -941,47 +962,6 @@ GpuHelper::Resize(const uint32_t width, const uint32_t height)
     return Result<>::Ok;
 }
 
-Result<wgpu::Texture>
-GpuHelper::CreateTexture(const uint32_t width,
-    const uint32_t height,
-    const TextureFormat& format,
-    const std::string_view name) const
-{
-    MLG_CHECK(!format.IsUnknown(), "Unknown texture compression type: {}", format.GetName());
-
-    MLG_CHECK(HasTextureFormat(format.GetFormatId()),
-        "Texture format not supported: {}",
-        format.GetName());
-
-    MLG_CHECK(width % format.GetBlockTexelWidth() == 0,
-        "Width must be a multiple of the block texel width: {}",
-        format.GetBlockTexelWidth());
-    MLG_CHECK(height % format.GetBlockTexelWidth() == 0,
-        "Height must be a multiple of the block texel width: {}",
-        format.GetBlockTexelWidth());
-
-    const wgpu::TextureDescriptor desc //
-        {
-            .label = name,
-            .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
-            .dimension = wgpu::TextureDimension::e2D,
-            .size = //
-            {
-                .width = width,
-                .height = height,
-                .depthOrArrayLayers = 1,
-            },
-            .format = format.GetWgpuFormat(),
-            .mipLevelCount = 1,
-            .sampleCount = 1,
-        };
-
-    wgpu::Texture texture = GetDevice().CreateTexture(&desc);
-    MLG_CHECK(texture, "Failed to create texture");
-
-    return texture;
-}
-
 Result<GpuRenderTarget>
 GpuHelper::CreateRenderTarget(
     const uint32_t width, const uint32_t height, const std::string_view name) const
@@ -1042,86 +1022,30 @@ GpuHelper::CreateDepthBuffer(
 // textures is Queue::WriteTexture howerver Queue::WriteTexture contains a bunch of validation and
 // is slow compared to using a staging buffer and CopyBufferToTexture.
 
-Result<wgpu::Buffer>
+Result<GpuTextureStagingBuffer>
 GpuHelper::CreateTextureStagingBuffer(const uint32_t width,
     const uint32_t height,
+    const uint32_t mipCount,
     const TextureFormat& format,
     const std::string_view name) const
 {
+    MLG_CHECK(format.CheckDimensions(width, height, mipCount));
+
     MLG_CHECK(!format.IsUnknown(), "Unknown texture compression type: {}", format.GetName());
 
     MLG_CHECK(HasTextureFormat(format.GetFormatId()),
         "Texture format not supported: {}",
         format.GetName());
+        
+    const size_t sizeofBuffer =
+        format.GetTotalPaddedSizeofMipData(width, height, mipCount, kTextureStrideAlignment);
 
-    MLG_CHECK(width % format.GetBlockTexelWidth() == 0,
-        "Width must be a multiple of the block texel width: {}",
-        format.GetBlockTexelWidth());
-    MLG_CHECK(height % format.GetBlockTexelWidth() == 0,
-        "Height must be a multiple of the block texel width: {}",
-        format.GetBlockTexelWidth());
-
-    const size_t sizeofBuffer = format.GetAlignedSizeofData(width, height, 256);
     const wgpu::BufferUsage usage = wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc;
 
-    auto buffer = CreateGpuBuffer(usage, sizeofBuffer, BufferMappedState::Mapped, name);
+    auto buffer = CreateGpuBuffer(*this, usage, sizeofBuffer, BufferMappedState::Mapped, name);
     MLG_CHECK(buffer, "Failed to create staging buffer");
 
-    return buffer;
-}
-
-Result<>
-GpuHelper::CommitTextureStagingBuffer(wgpu::Texture texture, wgpu::Buffer stagingBuffer) const
-{
-    const wgpu::CommandEncoder cmdEncoder = GetDevice().CreateCommandEncoder();
-
-    MLG_CHECK(CommitTextureStagingBuffer(texture, stagingBuffer, cmdEncoder));
-
-    const wgpu::CommandBuffer commandBuffer = cmdEncoder.Finish();
-
-    GetDevice().GetQueue().Submit(1, &commandBuffer);
-
-    return Result<>::Ok;
-}
-
-Result<>
-GpuHelper::CommitTextureStagingBuffer(
-    wgpu::Texture texture, wgpu::Buffer stagingBuffer, wgpu::CommandEncoder cmdEncoder)
-{
-    stagingBuffer.Unmap();
-
-    const TextureFormat format = TextureFormat::GetFormat(texture.GetFormat());
-    MLG_CHECKV(!format.IsUnknown(), "Unknown texture format: {}", format.GetName());
-
-    const wgpu::TexelCopyBufferInfo copySrc = //
-        {
-            .layout = //
-            {
-                .offset = 0,
-                .bytesPerRow = static_cast<uint32_t>(
-                    format.GetPaddedBytesPerRow(texture.GetWidth(), GpuHelper::kTextureStrideAlignment)),
-                .rowsPerImage = texture.GetHeight(),
-            },
-            .buffer = stagingBuffer,
-        };
-
-    const wgpu::TexelCopyTextureInfo copyDst = //
-        {
-            .texture = texture,
-            .mipLevel = 0,
-            .origin{},
-        };
-
-    const wgpu::Extent3D copySize = //
-        {
-            .width = texture.GetWidth(),
-            .height = texture.GetHeight(),
-            .depthOrArrayLayers = 1,
-        };
-
-    cmdEncoder.CopyBufferToTexture(&copySrc, &copyDst, &copySize);
-
-    return Result<>::Ok;
+    return GpuTextureStagingBuffer(*this, *buffer, width, height, mipCount, format, name);
 }
 
 Result<GpuVertexBuffer>
@@ -1129,7 +1053,8 @@ GpuHelper::CreateVertexBuffer(const size_t count, const std::string_view name) c
 {
     const wgpu::BufferUsage usage = wgpu::BufferUsage::Vertex | wgpu::BufferUsage::CopyDst;
 
-    auto buffer = CreateGpuBuffer(usage, count * sizeof(Vertex), BufferMappedState::Unmapped, name);
+    auto buffer =
+        CreateGpuBuffer(*this, usage, count * sizeof(Vertex), BufferMappedState::Unmapped, name);
 
     MLG_CHECK(buffer, "Failed to create vertex buffer");
 
@@ -1141,8 +1066,11 @@ GpuHelper::CreateIndexBuffer(const size_t count, const std::string_view name) co
 {
     const wgpu::BufferUsage usage = wgpu::BufferUsage::Index | wgpu::BufferUsage::CopyDst;
 
-    auto buffer =
-        CreateGpuBuffer(usage, count * sizeof(VertexIndex), BufferMappedState::Unmapped, name);
+    auto buffer = CreateGpuBuffer(*this,
+        usage,
+        count * sizeof(VertexIndex),
+        BufferMappedState::Unmapped,
+        name);
 
     MLG_CHECK(buffer, "Failed to create index buffer");
 
@@ -1168,31 +1096,11 @@ GpuHelper::GpuHelper(SDL_Window* window,
 }
 
 Result<wgpu::Buffer>
-GpuHelper::CreateGpuBuffer(const wgpu::BufferUsage usage,
-    const size_t size,
-    BufferMappedState mappedState,
-    const std::string_view name) const
-{
-    const wgpu::BufferDescriptor bufferDesc //
-        {
-            .label = name,
-            .usage = usage,
-            .size = size,
-            .mappedAtCreation = (mappedState == BufferMappedState::Mapped),
-        };
-
-    wgpu::Buffer buffer = GetDevice().CreateBuffer(&bufferDesc);
-    MLG_CHECK(buffer, "Failed to create GPU buffer");
-
-    return buffer;
-}
-
-Result<wgpu::Buffer>
 GpuHelper::CreateIndirectBuffer(const size_t size, const std::string_view name) const
 {
     const wgpu::BufferUsage usage = wgpu::BufferUsage::Indirect | wgpu::BufferUsage::CopyDst;
 
-    auto buffer = CreateGpuBuffer(usage, size, BufferMappedState::Unmapped, name);
+    auto buffer = CreateGpuBuffer(*this, usage, size, BufferMappedState::Unmapped, name);
     MLG_CHECK(buffer, "Failed to create indirect buffer");
 
     return buffer;
@@ -1203,7 +1111,7 @@ GpuHelper::CreateStorageBuffer(const size_t size, const std::string_view name) c
 {
     const wgpu::BufferUsage usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
 
-    auto buffer = CreateGpuBuffer(usage, size, BufferMappedState::Unmapped, name);
+    auto buffer = CreateGpuBuffer(*this, usage, size, BufferMappedState::Unmapped, name);
     MLG_CHECK(buffer, "Failed to create storage buffer");
 
     return buffer;
@@ -1214,7 +1122,7 @@ GpuHelper::CreateUniformBuffer(const size_t size, const std::string_view name) c
 {
     const wgpu::BufferUsage usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
 
-    auto buffer = CreateGpuBuffer(usage, size, BufferMappedState::Unmapped, name);
+    auto buffer = CreateGpuBuffer(*this, usage, size, BufferMappedState::Unmapped, name);
     MLG_CHECK(buffer, "Failed to create uniform buffer");
 
     return buffer;
