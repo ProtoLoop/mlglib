@@ -1,7 +1,9 @@
 
 #include "Defer.h"
 #include "GltfLoader.h"
+#include "Ktx2Writer.h"
 #include "Log.h"
+#include "MipMapChain.h"
 #include "ResourceBundle.h"
 #include "Result.h"
 #include "Scene.h"
@@ -22,7 +24,6 @@
 #include <iostream>
 #include <latch>
 #include <limits>
-#include <memory>
 #include <mutex>
 #include <span>
 #include <stb_image.h>
@@ -40,125 +41,6 @@ namespace
 // static_assert(std::is_trivially_copyable_v<TextureHeader>);
 static_assert(std::is_standard_layout_v<TextureHeader>);
 static_assert(sizeof(TextureHeader) == 28); // NOLINT(readability-magic-numbers)
-
-struct StbImageDeleter
-{
-    void operator()(stbi_uc* pixels) const noexcept
-    {
-        if(pixels != nullptr)
-        {
-            stbi_image_free(pixels);
-        }
-    }
-};
-
-using StbDataPtr = std::unique_ptr<stbi_uc, StbImageDeleter>;
-
-class MipImage
-{
-public:
-    MipImage() = delete;
-    ~MipImage() = default;
-    MipImage(const MipImage&) = delete;
-    MipImage& operator=(const MipImage&) = delete;
-    MipImage(MipImage&&) = default;
-    MipImage& operator=(MipImage&&) = default;
-
-    static Result<MipImage> Create(const uint32_t w,
-        const uint32_t h,
-        const TextureFormat& format,
-        std::vector<std::byte>&& bytes)
-    {
-        MLG_CHECK(!format.IsUnknown(), "Unknown texture format");
-        MLG_CHECKV(format.CheckDimensions(w, h, 1));
-        MLG_CHECK(!bytes.empty(), "Byte data cannot be empty");
-
-        return MipImage(w, h, format, std::move(bytes));
-    }
-
-    static Result<MipImage> Create(
-        const uint32_t w, const uint32_t h, const TextureFormat& format, StbDataPtr&& stbData)
-    {
-        MLG_CHECK(!format.IsUnknown(), "Unknown texture format");
-        MLG_CHECKV(format.CheckDimensions(w, h, 1));
-        MLG_CHECK(stbData, "Byte data cannot be empty");
-
-        return MipImage(w, h, format, std::move(stbData));
-    }
-
-    uint32_t GetWidth() const { return m_Width; }
-    uint32_t GetHeight() const { return m_Height; }
-    const TextureFormat& GetFormat() const { return m_Format; }
-    const std::span<std::byte>& GetBytes() const { return m_ByteSpan; }
-
-private:
-    MipImage(const uint32_t w,
-        const uint32_t h,
-        const TextureFormat& format,
-        std::vector<std::byte>&& bytes)
-        : m_Width(w),
-          m_Height(h),
-          m_Format(format),
-          m_Bytes(std::move(bytes)),
-          m_ByteSpan(m_Bytes)
-    {
-    }
-
-    MipImage(const uint32_t w, const uint32_t h, const TextureFormat& format, StbDataPtr&& stbData)
-        : m_Width(w),
-          m_Height(h),
-          m_Format(format),
-          m_StbData(std::move(stbData))
-    {
-        void* p = m_StbData.get();
-        const size_t size = static_cast<size_t>(w) * h * format.GetChannelCount();
-        m_ByteSpan = std::span<std::byte>(static_cast<std::byte*>(p), size);
-    }
-
-    uint32_t m_Width;
-    uint32_t m_Height;
-    TextureFormat m_Format;
-    std::vector<std::byte> m_Bytes;
-    StbDataPtr m_StbData;
-    std::span<std::byte> m_ByteSpan;
-};
-
-class CookedTexture
-{
-public:
-    CookedTexture() = delete;
-    ~CookedTexture() = default;
-    CookedTexture(const CookedTexture&) = delete;
-    CookedTexture& operator=(const CookedTexture&) = delete;
-    CookedTexture(CookedTexture&&) = default;
-    CookedTexture& operator=(CookedTexture&&) = default;
-
-    CookedTexture(const uint32_t w,
-        const uint32_t h,
-        const uint32_t mipCount,
-        TextureFormat format,
-        BoundedVector<MipImage>&& mipmaps)
-        : m_Width(w),
-          m_Height(h),
-          m_MipCount(mipCount),
-          m_Format(format),
-          m_MipMaps(std::move(mipmaps))
-    {
-    }
-
-    uint32_t GetWidth() const noexcept { return m_Width; }
-    uint32_t GetHeight() const noexcept { return m_Height; }
-    uint32_t GetMipCount() const noexcept { return m_MipCount; }
-    TextureFormat GetFormat() const noexcept { return m_Format; }
-    std::span<const MipImage> GetMipMaps() const noexcept { return m_MipMaps; }
-
-private:
-    uint32_t m_Width{ 0 };
-    uint32_t m_Height{ 0 };
-    uint32_t m_MipCount{ 1 };
-    TextureFormat m_Format = TextureFormat::GetUnknown();
-    BoundedVector<MipImage> m_MipMaps;
-};
 
 /// Command line arguments for the cook tool.
 struct CmdLineArgs
@@ -392,13 +274,8 @@ ResizeToBlockAlignment(const MipImage& mipImage,
 {
     resizedImage.reset();
 
-    const size_t blocksPerRow = format.GetBlocksPerRow(mipImage.GetWidth());
-    const size_t blockRowCount = format.GetBlockRowCount(mipImage.GetHeight());
-
-    const size_t blockDimension = format.GetBlockDimension();
-
-    const uint32_t blockAlignedWidth = static_cast<uint32_t>(blocksPerRow * blockDimension);
-    const uint32_t blockAlignedHeight = static_cast<uint32_t>(blockRowCount * blockDimension);
+    const uint32_t blockAlignedWidth = format.GetBlockAlignedWidth(mipImage.GetWidth());
+    const uint32_t blockAlignedHeight = format.GetBlockAlignedHeight(mipImage.GetHeight());
 
     // If necessary resize the image so its dimensions are multiples of the block size.
     if(blockAlignedWidth != mipImage.GetWidth() || blockAlignedHeight != mipImage.GetHeight())
@@ -417,7 +294,7 @@ Result<BoundedVector<MipImage>>
 MakeMipMaps(const MipImage& baseImage, const std::string_view texturePath)
 {
     const uint32_t mipCount =
-        TextureFormat::GetMipCount(baseImage.GetWidth(), baseImage.GetHeight());
+        TextureFormat::GetMaxMipCount(baseImage.GetWidth(), baseImage.GetHeight());
 
     const MipImage* prevImage = &baseImage;
 
@@ -452,9 +329,8 @@ EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
 
     const size_t blocksPerRow = bc7Format.GetBlocksPerRow(srcMip.GetWidth());
     const size_t blockRowCount = bc7Format.GetBlockRowCount(srcMip.GetHeight());
-
-    const uint32_t blockAlignedWidth = static_cast<uint32_t>(blocksPerRow * kBlockPixelDimension);
-    const uint32_t blockAlignedHeight = static_cast<uint32_t>(blockRowCount * kBlockPixelDimension);
+    const uint32_t blockAlignedWidth = bc7Format.GetBlockAlignedWidth(srcMip.GetWidth());
+    const uint32_t blockAlignedHeight = bc7Format.GetBlockAlignedHeight(srcMip.GetHeight());
 
     const uint32_t srcWidth = srcMip.GetWidth();
     const uint32_t srcHeight = srcMip.GetHeight();
@@ -557,7 +433,7 @@ EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
         bc7Format,
         std::move(outputBytes));
 }
-Result<CookedTexture>
+Result<MipMapChain>
 CreateBc7MipChain(const MipImage& srcImage, const std::string_view texturePath)
 {
     const MipImage* baseMip = &srcImage;
@@ -590,17 +466,12 @@ CreateBc7MipChain(const MipImage& srcImage, const std::string_view texturePath)
         mipmaps.emplace_back(std::move(*bc7Result));
     }
 
-    return CookedTexture(mipmaps.front().GetWidth(),
-        mipmaps.front().GetHeight(),
-        static_cast<uint32_t>(mipmaps.size()),
-        TextureFormat::GetBC7(),
-        std::move(mipmaps));
+    return MipMapChain::Create(std::move(mipmaps));
 }
 
 Result<>
-WriteTexture(const CookDirs& cookDirs,
-    const std::string_view texturePath,
-    const CookedTexture& cookedTexture)
+WriteTexture(
+    const CookDirs& cookDirs, const std::string_view texturePath, const MipMapChain& mipmapChain)
 {
     const std::filesystem::path srcPath = (cookDirs.InputDir / texturePath);
     const std::filesystem::path dstPath = (cookDirs.OutputDir / texturePath);
@@ -621,19 +492,19 @@ WriteTexture(const CookDirs& cookDirs,
         dstPath.string(),
         ec.message());
 
-    const TextureHeader header(cookedTexture.GetWidth(),
-        cookedTexture.GetHeight(),
-        cookedTexture.GetMipCount(),
-        cookedTexture.GetFormat().GetHeaderFourcc());
+    const TextureHeader header(mipmapChain.GetWidth(),
+        mipmapChain.GetHeight(),
+        mipmapChain.GetMipCount(),
+        mipmapChain.GetFormat().GetHeaderFourcc());
 
     std::vector<ByteSpan> byteSpans;
-    byteSpans.reserve(1 + cookedTexture.GetMipMaps().size());
+    byteSpans.reserve(1 + mipmapChain.GetMipMaps().size());
 
     const std::span<const std::byte> headerSpan = std::as_bytes(std::span(&header, 1));
 
     byteSpans.emplace_back(headerSpan);
 
-    for(const MipImage& mip : cookedTexture.GetMipMaps())
+    for(const MipImage& mip : mipmapChain.GetMipMaps())
     {
         const std::span<const std::byte> mipBytes = mip.GetBytes();
         byteSpans.emplace_back(mipBytes);
@@ -641,11 +512,17 @@ WriteTexture(const CookDirs& cookDirs,
 
     std::filesystem::path curDstPath = dstPath;
 
-    curDstPath.replace_extension(cookedTexture.GetFormat().GetExtension().AsStringView());
+    curDstPath.replace_extension(mipmapChain.GetFormat().GetExtension().AsStringView());
 
     MLG_INFO("Writing: {} -> {}...", srcPath.string(), curDstPath.string());
 
     MLG_CHECK(WriteFile(curDstPath, byteSpans));
+
+    curDstPath.replace_extension(".ktx2");
+
+    MLG_INFO("Writing: {} -> {}...", srcPath.string(), curDstPath.string());
+
+    MLG_CHECK(WriteKtx2(curDstPath, mipmapChain));
 
     return Result<>::Ok;
 }

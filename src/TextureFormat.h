@@ -107,6 +107,8 @@ public:
     constexpr FileExtension GetExtension() const noexcept { return m_Extension; }
     constexpr FourCC GetHeaderFourcc() const noexcept { return m_HeaderFourcc; }
 
+    constexpr friend bool operator==(const TextureFormat& lhs, const TextureFormat& rhs) noexcept = default;
+
     /// Returns the human-readable name of the texture format.
     constexpr std::string_view GetName() const noexcept { return m_HeaderFourcc.AsStringView(); }
 
@@ -140,6 +142,18 @@ public:
 
         // Round up to the next full block
         return (imageHeight + m_BlockDimension - 1) / m_BlockDimension;
+    }
+
+    /// Returns the width of the image rounded up to the nearest block boundary.
+    constexpr uint32_t GetBlockAlignedWidth(const uint32_t imageWidth) const noexcept
+    {
+        return static_cast<uint32_t>(GetBlocksPerRow(imageWidth) * m_BlockDimension);
+    }
+
+    /// Returns the height of the image rounded up to the nearest block boundary.
+    constexpr uint32_t GetBlockAlignedHeight(const uint32_t imageHeight) const noexcept
+    {
+        return static_cast<uint32_t>(GetBlockRowCount(imageHeight) * m_BlockDimension);
     }
 
     /// Returns the number of bytes in a row of the texture.
@@ -275,7 +289,7 @@ public:
     constexpr bool IsBC7() const noexcept { return m_FormatId == FormatIdentifier::BC7; }
 
     /// Returns the maximum number of mip levels for the given texture dimensions.
-    static constexpr uint32_t GetMipCount(const uint32_t width, const uint32_t height)
+    static constexpr uint32_t GetMaxMipCount(const uint32_t width, const uint32_t height)
     {
         uint32_t mipCount = 1;
         while(width >= (1u << mipCount) || height >= (1u << mipCount))
@@ -303,7 +317,7 @@ public:
             GetBlockDimension());
 
         MLG_CHECK(mipCount > 0, "Mip count must be greater than zero");
-        const uint32_t expectedMipCount = GetMipCount(width, height);
+        const uint32_t expectedMipCount = GetMaxMipCount(width, height);
         MLG_CHECK(mipCount <= expectedMipCount,
             "Mip count exceeds maximum allowed for the given dimensions: {} > {}",
             mipCount,
@@ -380,9 +394,21 @@ struct TextureHeader
     static constexpr TextureFormat::FourCC kMagic1{ 'T', 'E', 'X', ' ' };
     static constexpr uint32_t kVersion = 1;
 
+    /// Returns true if the buffer contains the correct header magic.
+    static bool CheckMagic(const std::span<const std::byte> buffer);
+
+    /// Returns true if the buffer contains the correct header version.
+    static bool CheckVersion(const std::span<const std::byte> buffer);
+
+    /// Returns true if the buffer contains a valid texture header.
+    static bool IsMlgTexture(const std::span<const std::byte> buffer);
+
     /// Extracts a texture header from the buffer.
     /// Returns a pointer to the texture header if the buffer contains a valid header, or nullptr otherwise.
-    static const TextureHeader* GetTextureHeader(const std::span<const std::byte> buffer);
+    static const TextureHeader* GetHeader(const std::span<const std::byte> buffer);
+
+    /// Extracts the pixel bytes from the buffer, excluding the header.
+    static Result<std::span<const std::byte>> GetPixelBytes(const std::span<const std::byte> buffer);
 
     static Result<> ValidateFile(const std::span<const std::byte> fileBuffer);
 

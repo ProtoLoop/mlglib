@@ -235,10 +235,11 @@ TextureLoader::BeginDecode()
 
     void (*decodeFunction)(void*) = nullptr;
 
-    const TextureHeader* header = TextureHeader::GetTextureHeader(m_FileBytes);
-
-    if(header)
+    if(TextureHeader::IsMlgTexture(m_FileBytes))
     {
+        const TextureHeader* header = TextureHeader::GetHeader(m_FileBytes);
+        MLG_CHECK(header, "Failed to get texture header");
+
         MLG_CHECK(TextureHeader::ValidateFile(m_FileBytes));
 
         MLG_CHECK(header, "Failed to get texture header");
@@ -331,7 +332,7 @@ TextureLoader::DecodeMlg()
         std::vector<std::byte>().swap(m_FileBytes);
     };
 
-    const TextureHeader* header = TextureHeader::GetTextureHeader(m_FileBytes);
+    const TextureHeader* header = TextureHeader::GetHeader(m_FileBytes);
     MLG_CHECK(header, "Failed to get texture header");
 
     MLG_DEBUG("Image info - {} x {} - {}",
@@ -339,10 +340,11 @@ TextureLoader::DecodeMlg()
         header->Height,
         header->FourCC.AsStringView());
 
-    const std::span<const std::byte> pixelBytes =
-        std::span(m_FileBytes).subspan(sizeof(TextureHeader));
+    const Result<std::span<const std::byte>> pixelBytesResult =
+        TextureHeader::GetPixelBytes(m_FileBytes);
+    MLG_CHECK(pixelBytesResult, "Failed to get pixel bytes");
 
-    MLG_CHECK(m_StagingBuffer->StageBytes(pixelBytes), "Failed to stage bytes");
+    MLG_CHECK(m_StagingBuffer->StageBytes(*pixelBytesResult), "Failed to stage bytes");
 
     return Result<>::Ok;
 }
