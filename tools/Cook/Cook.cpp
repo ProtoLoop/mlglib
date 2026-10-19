@@ -518,7 +518,10 @@ WriteTexture(
 
     MLG_CHECK(WriteFile(curDstPath, byteSpans));
 
-    curDstPath.replace_extension(".ktx2");
+    const std::string extension =
+        std::format("{}.ktx2", mipmapChain.GetFormat().GetExtension().AsStringView());
+
+    curDstPath.replace_extension(extension);
 
     MLG_INFO("Writing: {} -> {}...", srcPath.string(), curDstPath.string());
 
