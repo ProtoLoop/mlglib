@@ -274,10 +274,10 @@ Result<FileFetcher::RequestWrapper*>
 FileFetcher::AllocateRequest(const FilePath& filePath)
 {
     // Inside the request the relative path is only used for logging.
-    // Extract the stem from the full file path so we don't store the full path in the request.
-    const std::string_view stem = filePath.GetStem();
-    auto relativePath = RelativeFilePath::Create(stem);
-    MLG_CHECKV(relativePath, "Failed to create relative file path for: {}", stem);
+    // Extract the file name from the full file path so we don't store the full path in the request.
+    const std::string_view fileName = filePath.GetFilename();
+    auto relativePath = RelativeFilePath::Create(fileName);
+    MLG_CHECKV(relativePath, "Failed to create relative file path for: {}", fileName);
 
     if(!m_FreeList)
     {

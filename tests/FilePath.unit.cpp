@@ -100,7 +100,7 @@ TEST(DirectoryPath, AcceptsDirectories)
     ASSERT_TRUE(withoutSeparator);
     EXPECT_EQ(std::string_view(*withoutSeparator), "foo/");
 
-    EXPECT_EQ(std::string_view(DirectoryPath::Current()), "./");
+    EXPECT_EQ(std::string_view(DirectoryPath::GetCurrentDirectory()), "./");
     const auto current = DirectoryPath::Create("./");
     ASSERT_TRUE(current);
     EXPECT_EQ(std::string_view(*current), "./");
@@ -121,18 +121,18 @@ TEST(DirectoryPath, CopiesNonTerminatedStringView)
 
 TEST(DirectoryPath, ParentPathOfNestedFile)
 {
-    const auto nestedParent = DirectoryPath::ParentPath("assets/textures/brick.png");
+    const auto nestedParent = DirectoryPath::GetParentPath("assets/textures/brick.png");
     ASSERT_TRUE(nestedParent);
     EXPECT_EQ(std::string_view(*nestedParent), "assets/textures/");
 
-    const auto parent = DirectoryPath::ParentPath("assets/brick.png");
+    const auto parent = DirectoryPath::GetParentPath("assets/brick.png");
     ASSERT_TRUE(parent);
     EXPECT_EQ(std::string_view(*parent), "assets/");
 }
 
 TEST(DirectoryPath, ParentPathOfNestedDirectory)
 {
-    const auto parent = DirectoryPath::ParentPath("assets/textures/");
+    const auto parent = DirectoryPath::GetParentPath("assets/textures/");
     ASSERT_TRUE(parent);
     EXPECT_EQ(std::string_view(*parent), "assets/");
 }
@@ -141,9 +141,9 @@ TEST(DirectoryPath, ParentPathOfFileInCurrentDirectory)
 {
     const IgnorePathAssertions ignoreAssertions;
 
-    const auto parent = DirectoryPath::ParentPath("brick.png");
+    const auto parent = DirectoryPath::GetParentPath("brick.png");
     ASSERT_TRUE(parent);
-    EXPECT_EQ(*parent, DirectoryPath::Current());
+    EXPECT_EQ(*parent, DirectoryPath::GetCurrentDirectory());
 }
 
 TEST(DirectoryPath, RejectsInvalidDirectories)
@@ -198,7 +198,7 @@ TEST(FilePath, JoinsDirectoriesAndFiles)
     ASSERT_TRUE(nestedJoin);
     EXPECT_EQ(std::string_view(*nestedJoin), "assets/textures/icons/a.png");
 
-    const auto fromCurrent = Join(DirectoryPath::Current(), *file);
+    const auto fromCurrent = Join(DirectoryPath::GetCurrentDirectory(), *file);
     ASSERT_TRUE(fromCurrent);
     EXPECT_EQ(std::string_view(*fromCurrent), "brick.png");
     EXPECT_STREQ(fromCurrent->c_str(), "brick.png");
@@ -206,7 +206,7 @@ TEST(FilePath, JoinsDirectoriesAndFiles)
 
 TEST(FilePath, GetsStemForExtensionlessHiddenAndCompoundNames)
 {
-    const DirectoryPath current = DirectoryPath::Current();
+    const DirectoryPath current = DirectoryPath::GetCurrentDirectory();
 
     const auto extensionless = current.Join("README");
     ASSERT_TRUE(extensionless);
@@ -286,7 +286,7 @@ TEST(FilePath, JoinsAtMaximumInputLengths)
     EXPECT_EQ(std::string_view(*joined), std::string_view(expected));
     EXPECT_STREQ(joined->c_str(), expected.c_str());
 
-    const auto fromCurrent = Join(DirectoryPath::Current(), *file);
+    const auto fromCurrent = Join(DirectoryPath::GetCurrentDirectory(), *file);
     ASSERT_TRUE(fromCurrent);
     EXPECT_EQ(std::string_view(*fromCurrent), std::string_view(fileName));
 }

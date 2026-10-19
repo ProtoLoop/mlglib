@@ -61,7 +61,7 @@ GetParent(const std::string_view path) noexcept
 /// Example:
 /// "assets/textures/brick.png" returns "brick.png".
 constexpr std::string_view
-GetFileName(std::string_view path) noexcept
+GetFilename(std::string_view path) noexcept
 {
     const std::size_t separator = path.find_last_of('/');
 
@@ -99,7 +99,7 @@ GetExtension(const std::string_view fileName) noexcept
 constexpr std::string_view
 GetStem(std::string_view path) noexcept
 {
-    const std::string_view fileName = GetFileName(path);
+    const std::string_view fileName = GetFilename(path);
     const std::string_view extension = GetExtension(fileName);
 
     return fileName.substr(0, fileName.size() - extension.size());
@@ -108,7 +108,7 @@ GetStem(std::string_view path) noexcept
 constexpr std::string_view
 RemoveExtension(const std::string_view path) noexcept
 {
-    const std::string_view filename = GetFileName(path);
+    const std::string_view filename = GetFilename(path);
     const std::string_view extension = GetExtension(filename);
     return path.substr(0, path.size() - extension.size());
 }
@@ -152,7 +152,7 @@ DirectoryPath::Create(const std::string_view path)
 {
     if(path == "./")
     {
-        return Current();
+        return GetCurrentDirectory();
     }
 
     MLG_CHECKV(!path.empty(), "Directory path must not be empty");
@@ -189,11 +189,11 @@ DirectoryPath::Create(const std::string_view path)
 }
 
 Result<DirectoryPath>
-DirectoryPath::ParentPath(const std::string_view path)
+DirectoryPath::GetParentPath(const std::string_view path)
 {
     if(path == "./")
     {
-        return Current();
+        return GetCurrentDirectory();
     }
 
     // HasValidComponents fails for paths ending with a '/'
@@ -208,14 +208,14 @@ DirectoryPath::ParentPath(const std::string_view path)
 
     if(parentDir.empty())
     {
-        return DirectoryPath::Current();
+        return DirectoryPath::GetCurrentDirectory();
     }
 
     return DirectoryPath::Create(parentDir);
 }
 
 DirectoryPath
-DirectoryPath::Current()
+DirectoryPath::GetCurrentDirectory()
 {
     static const DirectoryPath current(StringStorageType("./"));
 
@@ -248,6 +248,18 @@ std::string_view
 FilePath::GetExtension() const noexcept
 {
     return ::GetExtension(m_Value);
+}
+
+std::string_view
+FilePath::GetParentPath() const noexcept
+{
+    return ::GetParent(m_Value);
+}
+
+std::string_view
+FilePath::GetFilename() const noexcept
+{
+    return ::GetFilename(m_Value);
 }
 
 Result<FilePath>

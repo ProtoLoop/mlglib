@@ -46,7 +46,7 @@ ShaderFetcher::OnStart(const FilePath& path)
 
     m_Stage = Stage::Fetching;
 
-    m_DiagPath = path.GetStem();
+    m_DiagPath = path.GetFilename();
 
     return Result<>::Ok;
 }

@@ -136,7 +136,7 @@ MainLoop()
     MLG_CHECK(systemResult, "Failed to create System");
     std::unique_ptr<System> system = std::move(*systemResult);
 
-    const auto sponzaModelPath = DirectoryPath::Current().Join(SPONZA_PATH);
+    const auto sponzaModelPath = DirectoryPath::GetCurrentDirectory().Join(SPONZA_PATH);
     MLG_CHECK(sponzaModelPath, "Failed to get sponza model path");
 
     auto loadResult = LoadLevel(*system, *sponzaModelPath);

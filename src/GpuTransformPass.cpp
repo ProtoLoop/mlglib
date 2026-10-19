@@ -157,10 +157,10 @@ GpuTransformPass::CreateTask::OnStart()
 
     m_Stage = Stage::Failed;
 
-    auto shaderPath = DirectoryPath::Current().Join(ShaderPath);
+    auto shaderPath = DirectoryPath::GetCurrentDirectory().Join(ShaderPath);
     MLG_CHECKV(shaderPath,
         "Failed to construct shader path: {}/{}",
-        DirectoryPath::Current(),
+        DirectoryPath::GetCurrentDirectory(),
         ShaderPath);
 
     MLG_CHECK(m_ShaderFetcher.Start(*shaderPath));

@@ -77,9 +77,10 @@ public:
 
     /// Returns the parent directory of the given path.
     /// Upon success the result is guaranteed to be a valid DirectoryPath.
-    static Result<DirectoryPath> ParentPath(const std::string_view path);
+    static Result<DirectoryPath> GetParentPath(const std::string_view path);
 
-    static DirectoryPath Current();
+    /// Returns the current working directory of the application.
+    static DirectoryPath GetCurrentDirectory();
 
     const char* c_str() const noexcept { return m_Value.c_str(); }
 
@@ -129,10 +130,17 @@ public:
 
     size_t size() const noexcept { return m_Value.size(); }
 
-    /// Returns the stem (filename without the directory path) of the file path.
+    /// Returns the stem (filename without the directory path or extension) of the file path.
     std::string_view GetStem() const noexcept;
 
+    /// Returns the extension of the file path, including the leading dot if present.
     std::string_view GetExtension() const noexcept;
+
+    /// Returns the parent directory of the file path, or the current directory if none exists.
+    std::string_view GetParentPath() const noexcept;
+
+    /// Returns the filename component of the file path, excluding the directory path.
+    std::string_view GetFilename() const noexcept;
 
     friend bool operator==(const FilePath&, const FilePath&) = default;
 
