@@ -16,11 +16,15 @@ MipMapChain::Create(BoundedVector<MipImage>&& mipmaps)
 
     for(const MipImage& mip : mipmaps)
     {
-        const uint32_t expectedWidth = format.GetBlockAlignedWidth(mipW);
-        const uint32_t expectedHeight = format.GetBlockAlignedHeight(mipH);
         MLG_CHECKV(mip.GetFormat() == format, "All mipmaps must have the same format");
-        MLG_CHECKV(mip.GetWidth() == expectedWidth, "Unexpected mip width: {}", mip.GetWidth());
-        MLG_CHECKV(mip.GetHeight() == expectedHeight, "Unexpected mip height: {}", mip.GetHeight());
+        MLG_CHECKV(mip.GetWidth() == mipW, "Unexpected mip width: {}", mip.GetWidth());
+        MLG_CHECKV(mip.GetHeight() == mipH, "Unexpected mip height: {}", mip.GetHeight());
+
+        const size_t expectedSize = format.GetBlockAlignedSizeofData(mipW, mipH);
+        MLG_CHECKV(mip.GetBytes().size() == expectedSize,
+            "Unexpected mip byte size: {} (expected: {})",
+            mip.GetBytes().size(),
+            expectedSize);
 
         mipW = std::max(1u, mipW >> 1);
         mipH = std::max(1u, mipH >> 1);

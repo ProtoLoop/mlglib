@@ -22,7 +22,11 @@ struct StbImageDeleter
 /// RAII wrapper for stb image data. Frees the image buffer when it goes out of scope.
 using StbDataPtr = std::unique_ptr<stbi_uc, StbImageDeleter>;
 
-/// Represents a single mip level imagea.
+/// Represents a single mip level image.
+/// The size of the image data corresponds to the block-aligned size for the given format,
+/// not necessarily to the width/height of the image.
+/// For example, if the block size is 4x4 pixels, and the image is 5x5, the block aligned
+/// size would be 8x8 pixels.  The size of the data will reflect this block-aligned size.
 class MipImage
 {
 public:

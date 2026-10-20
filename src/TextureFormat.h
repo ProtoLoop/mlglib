@@ -315,12 +315,6 @@ public:
             width,
             height);
 
-        MLG_CHECK(width % GetBlockDimension() == 0 && height % GetBlockDimension() == 0,
-            "Image width and height {}x{} must be multiples of the block dimension: {}",
-            width,
-            height,
-            GetBlockDimension());
-
         MLG_CHECK(mipCount > 0, "Mip count must be greater than zero");
         const uint32_t expectedMipCount = GetMaxMipCount(width, height);
         MLG_CHECK(mipCount <= expectedMipCount,

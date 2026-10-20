@@ -327,11 +327,6 @@ EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
 
     MLG_INFO("Encoding {} -> BC7...", texturePath);
 
-    const size_t blocksPerRow = bc7Format.GetBlocksPerRow(srcMip.GetWidth());
-    const size_t blockRowCount = bc7Format.GetBlockRowCount(srcMip.GetHeight());
-    const uint32_t blockAlignedWidth = bc7Format.GetBlockAlignedWidth(srcMip.GetWidth());
-    const uint32_t blockAlignedHeight = bc7Format.GetBlockAlignedHeight(srcMip.GetHeight());
-
     const uint32_t srcWidth = srcMip.GetWidth();
     const uint32_t srcHeight = srcMip.GetHeight();
 
@@ -344,7 +339,7 @@ EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
         bc7Format.GetPaddedBytesPerRow(blockAlignedWidth, GpuHelper::kTextureStrideAlignment);*/
 
     const size_t outputByteCount = bc7Format.GetBlockAlignedSizeofData(srcWidth, srcHeight);
-    const size_t dstRowStride = bc7Format.GetBlockAlignedBytesPerRow(blockAlignedWidth);
+    const size_t dstRowStride = bc7Format.GetBlockAlignedBytesPerRow(srcWidth);
 
     std::vector<std::byte> outputBytes(outputByteCount);
 
@@ -362,6 +357,9 @@ EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
     std::span dstBytes = outputBytes;
 
     std::byte blockPixels[kBlockPixelDimension][kBlockPixelDimension * kChannelCount];
+
+    const size_t blocksPerRow = bc7Format.GetBlocksPerRow(srcMip.GetWidth());
+    const size_t blockRowCount = bc7Format.GetBlockRowCount(srcMip.GetHeight());
 
     for(uint32_t blockY = 0; blockY < blockRowCount; ++blockY)
     {
@@ -428,10 +426,7 @@ EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
         dstBytes = dstBytes.subspan(dstRowStride);
     }
 
-    return MipImage::Create(static_cast<uint32_t>(blockAlignedWidth),
-        static_cast<uint32_t>(blockAlignedHeight),
-        bc7Format,
-        std::move(outputBytes));
+    return MipImage::Create(srcWidth, srcHeight, bc7Format, std::move(outputBytes));
 }
 Result<MipMapChain>
 CreateBc7MipChain(const MipImage& srcImage, const std::string_view texturePath)
