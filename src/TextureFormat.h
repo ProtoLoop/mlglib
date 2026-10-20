@@ -259,7 +259,7 @@ public:
 
     /// Returns the total size of the texture data for all mip levels, given the image width,
     /// height, mip count, and row alignment. This includes row padding.
-    constexpr size_t GetTotalPaddedSizeofMipData(const uint32_t imageWidth,
+    constexpr size_t GetTotalSizeofMipDataWithPadding(const uint32_t imageWidth,
         const uint32_t imageHeight,
         const uint32_t mipCount,
         const uint32_t alignment) const

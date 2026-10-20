@@ -14,8 +14,13 @@
 
 namespace
 {
-constexpr uint8_t kIdentifier[] //
-    { 0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A };
+constexpr size_t kSizeofIdentifier = 12;
+struct Identifier
+{
+    const uint8_t Bytes[kSizeofIdentifier]; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
+};
+constexpr Identifier kIdentifier //
+    { { 0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A } };
 constexpr size_t kFileHeaderByteCount = 80;
 constexpr size_t kGlobalDataOffsetFieldOffset = 64;
 constexpr size_t kLevelIndexEntryByteCount = 24;
@@ -29,7 +34,7 @@ constexpr uint32_t kUnormSampleUpper = 0xFFFFFFFF;
 // On-disk layouts written directly as bytes.
 struct FileHeader
 {
-    uint8_t Identifier[sizeof(kIdentifier)];
+    Identifier Identifier;
     uint32_t VkFormat;
     uint32_t TypeSize;
     uint32_t PixelWidth;
@@ -102,7 +107,7 @@ WriteKtx2(const std::filesystem::path& path, const MipMapChain& chain)
     const TextureFormat format = chain.GetFormat();
     const uint32_t mipCount = chain.GetMipCount();
     const auto mips = chain.GetMipMaps();
-    MLG_CHECK(format.IsBC7(), "KTX2 writer requires BC7 sRGB data");
+    MLG_CHECK(format.IsBC7(), "KTX2 writer requires BC7 data");
     MLG_CHECK(format.CheckDimensions(chain.GetWidth(), chain.GetHeight(), mipCount));
     MLG_CHECK(mips.size() == mipCount, "KTX2 mip count does not match chain data");
 
@@ -110,7 +115,7 @@ WriteKtx2(const std::filesystem::path& path, const MipMapChain& chain)
     {
         const uint32_t width = std::max(chain.GetWidth() >> mip, 1u);
         const uint32_t height = std::max(chain.GetHeight() >> mip, 1u);
-        MLG_CHECK(mips[mip].GetFormat().IsBC7(), "KTX2 mip {} is not BC7", mip);
+        MLG_CHECK(mips[mip].GetFormat() == format, "KTX2 mip {} does not match the expected format", mip);
         MLG_CHECK(mips[mip].GetBytes().size() == format.GetBlockAlignedSizeofData(width, height),
             "Invalid KTX2 mip {} byte count",
             mip);
@@ -124,7 +129,7 @@ WriteKtx2(const std::filesystem::path& path, const MipMapChain& chain)
 
     FileHeader fileHeader //
         {
-            .Identifier = {},
+            .Identifier = kIdentifier,
             .VkFormat = kVkFormatBc7Srgb,
             .TypeSize = 1,
             .PixelWidth = chain.GetWidth(),
@@ -141,7 +146,6 @@ WriteKtx2(const std::filesystem::path& path, const MipMapChain& chain)
             .GlobalDataOffset = 0,
             .GlobalDataSize = 0,
         };
-    std::copy_n(&kIdentifier[0], sizeof(kIdentifier), &fileHeader.Identifier[0]);
 
     // The index starts with level zero, but the payload starts with the smallest mip.
     std::vector<LevelIndexEntry> levels(mipCount);

@@ -1,4 +1,5 @@
 
+#include "Compressors.h"
 #include "Defer.h"
 #include "GltfLoader.h"
 #include "Ktx2Writer.h"
@@ -13,8 +14,6 @@
 #include "ThreadPool.h"
 #include "Timer.h"
 
-#include <algorithm>
-#include <bc7enc.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -24,7 +23,6 @@
 #include <iostream>
 #include <latch>
 #include <limits>
-#include <mutex>
 #include <span>
 #include <stb_image.h>
 #include <string_view>
@@ -32,9 +30,6 @@
 #include <system_error>
 #include <type_traits>
 #include <vector>
-
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
-#include <stb_image_resize2.h>
 
 namespace
 {
@@ -229,241 +224,6 @@ LoadRawTexture(const CookDirs& cookDirs, const std::string_view texturePath)
     return MipImage::Create(uImgWidth, uImgHeight, TextureFormat::GetRGBA(), std::move(stbData));
 }
 
-Result<MipImage>
-Resize(const MipImage& mipImage,
-    const uint32_t newWidth,
-    const uint32_t newHeight,
-    const std::string_view texturePath)
-{
-    const TextureFormat& format = mipImage.GetFormat();
-
-    MLG_CHECKV(format.CheckDimensions(newWidth, newHeight, 1));
-    MLG_CHECKV(newWidth != mipImage.GetWidth() || newHeight != mipImage.GetHeight(),
-        "New dimensions must be different from the original dimensions");
-
-    const size_t byteCount = static_cast<size_t>(newWidth) * newHeight * format.GetChannelCount();
-
-    std::vector<std::byte> mipBytes(byteCount);
-
-    const void* srcP = mipImage.GetBytes().data();
-    void* dstP = mipBytes.data();
-
-    const unsigned char* result = stbir_resize_uint8_srgb(static_cast<const stbi_uc*>(srcP),
-        static_cast<int>(mipImage.GetWidth()),
-        static_cast<int>(mipImage.GetHeight()),
-        static_cast<int>(mipImage.GetWidth() * format.GetChannelCount()),
-        static_cast<stbi_uc*>(dstP),
-        static_cast<int>(newWidth),
-        static_cast<int>(newHeight),
-        static_cast<int>(newWidth * format.GetChannelCount()),
-        STBIR_RGBA);
-
-    MLG_CHECK(result, "Failed to resize image: {}", texturePath);
-
-    return MipImage::Create(newWidth, newHeight, format, std::move(mipBytes));
-}
-
-/// Resizes the mip image to match the block alignment requirements of the texture format.
-/// If no resizing is necessary, the original image is left unchanged and `resizedImage` remains
-/// empty.
-Result<>
-ResizeToBlockAlignment(const MipImage& mipImage,
-    const TextureFormat& format,
-    const std::string_view texturePath,
-    std::optional<MipImage>& resizedImage)
-{
-    resizedImage.reset();
-
-    const uint32_t blockAlignedWidth = format.GetBlockAlignedWidth(mipImage.GetWidth());
-    const uint32_t blockAlignedHeight = format.GetBlockAlignedHeight(mipImage.GetHeight());
-
-    // If necessary resize the image so its dimensions are multiples of the block size.
-    if(blockAlignedWidth != mipImage.GetWidth() || blockAlignedHeight != mipImage.GetHeight())
-    {
-        auto resizeResult = Resize(mipImage, blockAlignedWidth, blockAlignedHeight, texturePath);
-        MLG_CHECK(resizeResult, "Failed to resize image: {}", texturePath);
-
-        resizedImage.emplace(std::move(*resizeResult));
-    }
-
-    return Result<>::Ok;
-}
-
-// Generates mipmaps for a raw texture and returns them as a vector of byte arrays.
-Result<BoundedVector<MipImage>>
-MakeMipMaps(const MipImage& baseImage, const std::string_view texturePath)
-{
-    const uint32_t mipCount =
-        TextureFormat::GetMaxMipCount(baseImage.GetWidth(), baseImage.GetHeight());
-
-    const MipImage* prevImage = &baseImage;
-
-    BoundedVector<MipImage> mipmaps(mipCount - 1);
-
-    for(uint32_t mip = 1; mip < mipCount; ++mip)
-    {
-        const uint32_t mipWidth = std::max(prevImage->GetWidth() >> 1, 1u);
-        const uint32_t mipHeight = std::max(prevImage->GetHeight() >> 1, 1u);
-
-        auto resizeResult = Resize(*prevImage, mipWidth, mipHeight, texturePath);
-        MLG_CHECK(resizeResult, "Failed to resize image: {}", texturePath);
-
-        mipmaps.emplace_back(std::move(*resizeResult));
-
-        prevImage = &mipmaps.back();
-    }
-
-    return std::move(mipmaps);
-}
-
-// Encodes an image as BC7.
-Result<MipImage>
-EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
-{
-    constexpr uint32_t kChannelCount = 4;
-    constexpr uint32_t kBlockPixelDimension = 4;
-
-    const TextureFormat& bc7Format = TextureFormat::GetBC7();
-
-    MLG_INFO("Encoding {} -> BC7...", texturePath);
-
-    const uint32_t srcWidth = srcMip.GetWidth();
-    const uint32_t srcHeight = srcMip.GetHeight();
-
-    /*// Allocate memory for the compressed BC7 texture data.
-    // Size includes padding so it can be directly used for GPU uploads.
-    const size_t outputByteCount = bc7Format.GetPaddedSizeofData(srcWidth,
-        srcHeight,
-        GpuHelper::kTextureStrideAlignment);
-    const size_t dstRowStride =
-        bc7Format.GetPaddedBytesPerRow(blockAlignedWidth, GpuHelper::kTextureStrideAlignment);*/
-
-    const size_t outputByteCount = bc7Format.GetBlockAlignedSizeofData(srcWidth, srcHeight);
-    const size_t dstRowStride = bc7Format.GetBlockAlignedBytesPerRow(srcWidth);
-
-    std::vector<std::byte> outputBytes(outputByteCount);
-
-    // Compress.
-
-    // Call once before using the encoder.
-    static std::once_flag bc7enc_init_flag;
-    std::call_once(bc7enc_init_flag, bc7enc_compress_block_init);
-
-    bc7enc_compress_block_params params{};
-    bc7enc_compress_block_params_init(&params);
-
-    const size_t srcRowStride = static_cast<size_t>(srcWidth) * kChannelCount;
-    const std::span<const std::byte> srcBytes = srcMip.GetBytes();
-    std::span dstBytes = outputBytes;
-
-    std::byte blockPixels[kBlockPixelDimension][kBlockPixelDimension * kChannelCount];
-
-    const size_t blocksPerRow = bc7Format.GetBlocksPerRow(srcMip.GetWidth());
-    const size_t blockRowCount = bc7Format.GetBlockRowCount(srcMip.GetHeight());
-
-    for(uint32_t blockY = 0; blockY < blockRowCount; ++blockY)
-    {
-        const uint32_t srcY = blockY * kBlockPixelDimension;
-        size_t dstRowOffset = 0;
-
-        for(uint32_t blockX = 0; blockX < blocksPerRow;
-            ++blockX, dstRowOffset += bc7Format.GetBytesPerBlock())
-        {
-            const uint32_t srcX = blockX * kBlockPixelDimension;
-
-            const bool isFullBlock =
-                srcWidth - srcX >= kBlockPixelDimension && srcHeight - srcY >= kBlockPixelDimension;
-
-            if(isFullBlock)
-            {
-                size_t srcOffset = (static_cast<size_t>(srcY) * srcRowStride)
-                    + (static_cast<size_t>(srcX) * kChannelCount);
-
-                std::copy_n(srcBytes.subspan(srcOffset).data(),
-                    kBlockPixelDimension * kChannelCount,
-                    &blockPixels[0][0]);
-
-                srcOffset += srcRowStride;
-                std::copy_n(srcBytes.subspan(srcOffset).data(),
-                    kBlockPixelDimension * kChannelCount,
-                    &blockPixels[1][0]);
-
-                srcOffset += srcRowStride;
-                std::copy_n(srcBytes.subspan(srcOffset).data(),
-                    kBlockPixelDimension * kChannelCount,
-                    &blockPixels[2][0]);
-
-                srcOffset += srcRowStride;
-                std::copy_n(srcBytes.subspan(srcOffset).data(),
-                    kBlockPixelDimension * kChannelCount,
-                    &blockPixels[3][0]);
-            }
-            else
-            {
-                for(uint32_t y = 0; y < kBlockPixelDimension; ++y)
-                {
-                    const uint32_t sourceY = std::min(srcY + y, srcHeight - 1);
-
-                    size_t dstOffset = 0;
-
-                    for(uint32_t x = 0; x < kBlockPixelDimension; ++x, dstOffset += kChannelCount)
-                    {
-                        const uint32_t sourceX = std::min(srcX + x, srcWidth - 1);
-                        const size_t srcOffset = (static_cast<size_t>(sourceY) * srcRowStride)
-                            + (static_cast<size_t>(sourceX) * kChannelCount);
-
-                        std::copy_n(srcBytes.subspan(srcOffset).data(),
-                            kChannelCount,
-                            &blockPixels[y][dstOffset]);
-                    }
-                }
-            }
-
-            // The return value indicates transparency, not success or failure.
-            bc7enc_compress_block(&dstBytes[dstRowOffset], &blockPixels[0], &params);
-        }
-
-        dstBytes = dstBytes.subspan(dstRowStride);
-    }
-
-    return MipImage::Create(srcWidth, srcHeight, bc7Format, std::move(outputBytes));
-}
-Result<MipMapChain>
-CreateBc7MipChain(const MipImage& srcImage, const std::string_view texturePath)
-{
-    const MipImage* baseMip = &srcImage;
-
-    // If necessary resize the image so its dimensions are multiples of the block size.
-    std::optional<MipImage> resizedImage;
-    auto resizeResult =
-        ResizeToBlockAlignment(*baseMip, TextureFormat::GetBC7(), texturePath, resizedImage);
-    MLG_CHECK(resizeResult, "Failed to resize image to block alignment: {}", texturePath);
-
-    if(resizedImage)
-    {
-        baseMip = &resizedImage.value();
-    }
-
-    auto mipmapsResult = MakeMipMaps(*baseMip, texturePath);
-    MLG_CHECK(mipmapsResult, "Failed to generate mipmaps for texture: {}", texturePath);
-
-    BoundedVector<MipImage> mipmaps(mipmapsResult->size() + 1);
-
-    auto bc7Result = EncodeBC7Mip(*baseMip, texturePath);
-    MLG_CHECK(bc7Result, "Failed to encode BC7 mip level for texture: {}", texturePath);
-
-    mipmaps.emplace_back(std::move(*bc7Result));
-
-    for(const MipImage& mip : *mipmapsResult)
-    {
-        bc7Result = EncodeBC7Mip(mip, texturePath);
-        MLG_CHECK(bc7Result, "Failed to encode BC7 mip level for texture: {}", texturePath);
-        mipmaps.emplace_back(std::move(*bc7Result));
-    }
-
-    return MipMapChain::Create(std::move(mipmaps));
-}
-
 Result<>
 WriteTexture(
     const CookDirs& cookDirs, const std::string_view texturePath, const MipMapChain& mipmapChain)
@@ -534,7 +294,7 @@ CookTexture(CookTextureWorkerParams& params)
     auto rawImageResult = LoadRawTexture(params.CookDirs, params.TexturePath);
     MLG_CHECK(rawImageResult);
 
-    auto bc7Result = CreateBc7MipChain(*rawImageResult, params.TexturePath);
+    auto bc7Result = EncodeBC7(std::move(*rawImageResult), params.TexturePath);
     MLG_CHECK(bc7Result, "Failed to encode BC7 texture: {}", params.TexturePath);
 
     MLG_CHECK(WriteTexture(params.CookDirs, params.TexturePath, *bc7Result));

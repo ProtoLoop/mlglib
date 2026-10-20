@@ -529,7 +529,7 @@ endfunction()
 # Tool: Cook
 # ============================================================
 add_tool_executable(Cook tools/Cook/Cook.cpp)
-target_sources(Cook PRIVATE tools/Cook/Ktx2Writer.cpp tools/Cook/MipMapChain.cpp)
+target_sources(Cook PRIVATE tools/Cook/Ktx2Writer.cpp tools/Cook/MipMapChain.cpp tools/Cook/Compressors.cpp)
 target_link_libraries(Cook PRIVATE bc7enc_rdo)
 target_include_directories(Cook SYSTEM PRIVATE thirdparty/stb)
 

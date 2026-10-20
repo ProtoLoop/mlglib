@@ -78,7 +78,7 @@ GpuTextureStagingBuffer::StageMipBytes(const uint32_t mipLevel,
     MLG_CHECKV(srcBytes.size() == m_Format.GetBlockAlignedSizeofData(width, height),
         "Source mip byte size does not match expected size");
 
-    const size_t dstOffset = m_Format.GetTotalPaddedSizeofMipData(m_Width,
+    const size_t dstOffset = m_Format.GetTotalSizeofMipDataWithPadding(m_Width,
         m_Height,
         mipLevel,
         GpuHelper::kTextureStrideAlignment);

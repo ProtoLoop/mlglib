@@ -1,8 +1,8 @@
 #pragma once
 
+#include "Containers.h"
 #include "Result.h"
 #include "TextureFormat.h"
-#include "Containers.h"
 
 #include <memory>
 #include <span>
@@ -41,26 +41,14 @@ public:
     static Result<MipImage> Create(const uint32_t w,
         const uint32_t h,
         const TextureFormat& format,
-        std::vector<std::byte>&& bytes)
-    {
-        MLG_CHECK(!format.IsUnknown(), "Unknown texture format");
-        MLG_CHECKV(format.CheckDimensions(w, h, 1));
-        MLG_CHECK(bytes.size() == format.GetBlockAlignedSizeofData(w, h),
-            "Byte data size does not match expected dimensions and format");
-
-        return MipImage(w, h, format, std::move(bytes));
-    }
+        std::vector<std::byte>&& bytes);
 
     /// Creates a mip image from stb image data, typically loaded from a file.
     static Result<MipImage> Create(
-        const uint32_t w, const uint32_t h, const TextureFormat& format, StbDataPtr&& stbData)
-    {
-        MLG_CHECK(!format.IsUnknown(), "Unknown texture format");
-        MLG_CHECKV(format.CheckDimensions(w, h, 1));
-        MLG_CHECK(stbData, "Byte data cannot be empty");
+        const uint32_t w, const uint32_t h, const TextureFormat& format, StbDataPtr&& stbData);
 
-        return MipImage(w, h, format, std::move(stbData));
-    }
+    /// Returns a new resized version of the mip image.
+    Result<MipImage> Resize(const uint32_t newWidth, const uint32_t newHeight) const;
 
     uint32_t GetWidth() const { return m_Width; }
     uint32_t GetHeight() const { return m_Height; }
@@ -110,6 +98,11 @@ public:
     MipMapChain(MipMapChain&&) = default;
     MipMapChain& operator=(MipMapChain&&) = default;
 
+    /// Creates a mipmap chain from the base image, generating all necessary mip levels.
+    /// The baseImage will be used as the highest resolution mip level.  It's resources
+    /// will be moved into the mipmap chain.
+    static Result<MipMapChain> Create(MipImage&& baseImage);
+
     static Result<MipMapChain> Create(BoundedVector<MipImage>&& mipmaps);
 
     uint32_t GetWidth() const noexcept { return m_Width; }
@@ -119,7 +112,6 @@ public:
     std::span<const MipImage> GetMipMaps() const noexcept { return m_MipMaps; }
 
 private:
-
     MipMapChain(const uint32_t w,
         const uint32_t h,
         const uint32_t mipCount,

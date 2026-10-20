@@ -137,4 +137,5 @@ the orientation and channel interpretation expected by the engine.
 KTX2 stores its mip payloads smallest first. The loader uses the level index to
 stage each mip into its destination range, adding upload-row padding on the
 worker. Staging-buffer creation and GPU commit stay on the main thread.
-`LoadFromResource()` continues to select the custom `.bc7` files.
+`LoadFromResource()` selects `.bc7.ktx2` files when the bundle advertises BC7 and
+the device supports it. Otherwise, it loads the original PNG/JPEG file.

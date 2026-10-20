@@ -1029,16 +1029,17 @@ GpuHelper::CreateTextureStagingBuffer(const uint32_t width,
     const TextureFormat& format,
     const std::string_view name) const
 {
+    MLG_CHECK(!format.IsUnknown(), "Unknown texture format: {}", format.GetName());
     MLG_CHECK(format.CheckDimensions(width, height, mipCount));
-
-    MLG_CHECK(!format.IsUnknown(), "Unknown texture compression type: {}", format.GetName());
+    MLG_CHECK(width % format.GetBlockDimension() == 0 && height % format.GetBlockDimension() == 0,
+        "Texture dimensions must be block aligned for format: {}", format.GetName());
 
     MLG_CHECK(HasTextureFormat(format.GetFormatId()),
         "Texture format not supported: {}",
         format.GetName());
-        
+
     const size_t sizeofBuffer =
-        format.GetTotalPaddedSizeofMipData(width, height, mipCount, kTextureStrideAlignment);
+        format.GetTotalSizeofMipDataWithPadding(width, height, mipCount, kTextureStrideAlignment);
 
     const wgpu::BufferUsage usage = wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc;
 
