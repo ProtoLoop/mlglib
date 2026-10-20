@@ -5,6 +5,7 @@
 #include "Defer.h"
 #include "FileFetcher.h"
 #include "GpuHelper.h"
+#include "Ktx2.h"
 #include "ResourceBundle.h"
 #include "System.h"
 #include "ThreadPool.h"
@@ -72,10 +73,11 @@ TextureLoader::LoadFromResource(const GpuHelper& gpuHelper,
     if((texRsrc.HasBC7Encoding())
         && gpuHelper.HasTextureFormat(TextureFormat::FormatIdentifier::BC7))
     {
-        const auto bc7PathResult =
-            relPath.ReplaceExtension(TextureFormat::GetBC7().GetExtension().AsStringView());
-        MLG_CHECK(bc7PathResult, "Failed to replace extension for {}", relPath);
-        relPath = *bc7PathResult;
+        const std::string_view bc7Extension = TextureFormat::GetBC7().GetExtension().AsStringView();
+        const InplaceString<> ktx2Extension = InplaceString<>::Format("{}.{}", bc7Extension, "ktx2");
+        const auto pathResult = relPath.ReplaceExtension(ktx2Extension);
+        MLG_CHECK(pathResult, "Failed to replace extension for {} with {}", relPath, ktx2Extension);
+        relPath = *pathResult;
     }
 
     const auto fullPathResult = workingDirectory.Join(relPath);
@@ -128,7 +130,7 @@ TextureLoader::OnUpdate()
             break;
 
         case Stage::LoadFromFile:
-            MLG_DEBUG("Loading texture: {}...", m_Path->GetStem());
+            MLG_DEBUG("Loading texture: {}...", m_Path->GetFilename());
             if(auto fetchResult = m_FileFetcher->Fetch(*m_Path); !fetchResult)
             {
                 m_Stage = Stage::Failed;
@@ -231,7 +233,9 @@ TextureLoader::Commit()
 Result<>
 TextureLoader::BeginDecode()
 {
-    MLG_DEBUG("Decoding texture: {}...", m_Path->GetStem());
+    MLG_LOG_SCOPE(m_Path->GetFilename());
+
+    MLG_DEBUG("Decoding texture...");
 
     void (*decodeFunction)(void*) = nullptr;
 
@@ -255,6 +259,16 @@ TextureLoader::BeginDecode()
         m_Format = TextureFormat::GetFormat(header->FourCC);
 
         decodeFunction = DecodeMlg;
+    }
+    else if(Ktx2Header::IsKtx2(m_FileBytes))
+    {
+        const auto header = Ktx2Header::GetHeader(m_FileBytes);
+        MLG_CHECK(header, "Invalid or unsupported KTX2 texture");
+        m_Width = header->Width;
+        m_Height = header->Height;
+        m_MipCount = header->MipCount;
+        m_Format = header->Format;
+        decodeFunction = DecodeKtx2;
     }
     else
     {
@@ -292,7 +306,7 @@ TextureLoader::BeginDecode()
         m_Height,
         m_MipCount,
         m_Format,
-        m_Path->GetStem());
+        m_Path->GetFilename());
 
     MLG_CHECK(texBufResult, "Failed to create texture staging buffer");
 
@@ -300,6 +314,33 @@ TextureLoader::BeginDecode()
 
     MLG_CHECK(m_ThreadPool->Enqueue(decodeFunction, this), "Failed to enqueue texture decode task");
 
+    return Result<>::Ok;
+}
+
+void
+TextureLoader::DecodeKtx2(void* userData)
+{
+    TextureLoader* loader = static_cast<TextureLoader*>(userData);
+    loader->m_DecodeResult = loader->DecodeKtx2();
+    loader->m_DecodeCompletionFlag.store(true);
+}
+
+Result<>
+TextureLoader::DecodeKtx2()
+{
+    MLG_LOG_SCOPE(m_Path->GetFilename());
+
+    MLG_DEFER
+    {
+        std::vector<std::byte>().swap(m_FileBytes);
+    };
+
+    for(uint32_t mip = 0; mip < m_MipCount; ++mip)
+    {
+        const auto bytes = Ktx2Header::GetMipBytes(m_FileBytes, mip);
+        MLG_CHECK(bytes, "Failed to get KTX2 mip bytes");
+        MLG_CHECK(m_StagingBuffer->StageMipBytes(mip, *bytes), "Failed to stage KTX2 mip");
+    }
     return Result<>::Ok;
 }
 
@@ -322,9 +363,9 @@ TextureLoader::DecodeStb(void* userData)
 Result<>
 TextureLoader::DecodeMlg()
 {
-    MLG_LOG_SCOPE(m_Path->GetStem());
+    MLG_LOG_SCOPE(m_Path->GetFilename());
 
-    MLG_DEBUG("Decoding MLG texture: {}...", m_Path->GetStem());
+    MLG_DEBUG("Decoding MLG texture...");
 
     MLG_DEFER
     {
@@ -352,9 +393,9 @@ TextureLoader::DecodeMlg()
 Result<>
 TextureLoader::DecodeStb()
 {
-    MLG_LOG_SCOPE(m_Path->GetStem());
+    MLG_LOG_SCOPE(m_Path->GetFilename());
 
-    MLG_DEBUG("Decoding stb texture: {}...", m_Path->GetStem());
+    MLG_DEBUG("Decoding stb texture...");
 
     MLG_DEFER
     {

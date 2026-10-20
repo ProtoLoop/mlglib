@@ -79,7 +79,6 @@ public:
     };
 
 private:
-
     consteval TextureFormat(const FormatIdentifier formatId,
         const wgpu::TextureFormat wgpuFormat,
         const uint32_t channelCount,
@@ -98,7 +97,6 @@ private:
     }
 
 public:
-
     constexpr FormatIdentifier GetFormatId() const noexcept { return m_FormatId; }
     constexpr wgpu::TextureFormat GetWgpuFormat() const noexcept { return m_WgpuFormat; }
     constexpr size_t GetChannelCount() const noexcept { return m_ChannelCount; }
@@ -107,7 +105,8 @@ public:
     constexpr FileExtension GetExtension() const noexcept { return m_Extension; }
     constexpr FourCC GetHeaderFourcc() const noexcept { return m_HeaderFourcc; }
 
-    constexpr friend bool operator==(const TextureFormat& lhs, const TextureFormat& rhs) noexcept = default;
+    constexpr friend bool operator==(const TextureFormat& lhs,
+        const TextureFormat& rhs) noexcept = default;
 
     /// Returns the human-readable name of the texture format.
     constexpr std::string_view GetName() const noexcept { return m_HeaderFourcc.AsStringView(); }
@@ -156,12 +155,12 @@ public:
         return static_cast<uint32_t>(GetBlockRowCount(imageHeight) * m_BlockDimension);
     }
 
-    /// Returns the number of bytes in a row of the texture.
+    /// Returns the number of bytes in a block-aligned row of the texture.
     /// The number of bytes per row can vary depending on the compression scheme.
     /// Raw RGBA images have width * 4 bytes per row.
     /// BC7 compressed images have 16 byte blocks, and (width + 3) / 4 blocks per row, so 16 *
     /// ((width + 3) / 4) bytes per row.
-    constexpr size_t GetBytesPerRow(const uint32_t imageWidth) const
+    constexpr size_t GetBlockAlignedBytesPerRow(const uint32_t imageWidth) const
     {
         // Round up to the next full block
         const size_t blocksPerRow = GetBlocksPerRow(imageWidth);
@@ -173,35 +172,37 @@ public:
         return blocksPerRow * m_BytesPerBlock;
     }
 
-    /// Returns the number of bytes in a row of the texture, aligned to the specified alignment.
-    constexpr size_t GetPaddedBytesPerRow(const uint32_t imageWidth,
-        const uint32_t alignment) const
+    /// Returns the number of block-aligned bytes in a row of the texture, aligned to the specified
+    /// alignment.
+    constexpr size_t GetBlockAlignedBytesPerRowWithPadding(const uint32_t imageWidth,
+        const uint32_t rowStrideAlignment) const
     {
-        MLG_ABORTIF(alignment == 0, "Alignment must be non-zero");
+        MLG_ABORTIF(rowStrideAlignment == 0, "Alignment must be non-zero");
 
-        const size_t bytesPerRow = GetBytesPerRow(imageWidth);
+        const size_t bytesPerRow = GetBlockAlignedBytesPerRow(imageWidth);
 
-        MLG_ABORTIF(std::numeric_limits<size_t>::max() - alignment + 1 < bytesPerRow,
+        MLG_ABORTIF(std::numeric_limits<size_t>::max() - rowStrideAlignment + 1 < bytesPerRow,
             "Alignment too large for the given row size: {} > {}",
-            alignment,
+            rowStrideAlignment,
             bytesPerRow);
 
-        const size_t alignmentsPerRow = (bytesPerRow + alignment - 1) / alignment;
+        const size_t alignmentsPerRow = (bytesPerRow + rowStrideAlignment - 1) / rowStrideAlignment;
 
-        MLG_ABORTIF(std::numeric_limits<size_t>::max() / alignment < alignmentsPerRow,
+        MLG_ABORTIF(std::numeric_limits<size_t>::max() / rowStrideAlignment < alignmentsPerRow,
             "Aligned row width too large: {}",
             bytesPerRow);
 
-        return alignmentsPerRow * alignment;
+        return alignmentsPerRow * rowStrideAlignment;
     }
 
-    /// Returns the size of the texture data in bytes, given the image width and height.
-    /// Width/height are used to calculate the block column/row count for the texture.
-    /// If width/height are not multiples of the block texel dimensions, the calculation will round
-    /// up to the next full block.
-    constexpr size_t GetSizeofData(const uint32_t imageWidth, const uint32_t imageHeight) const
+    /// Returns the block-aligned size of the texture data in bytes, given the image width and
+    /// height. Width/height are used to calculate the block column/row count for the texture. If
+    /// width/height are not multiples of the block texel dimensions, the calculation will round up
+    /// to the next full block.
+    constexpr size_t GetBlockAlignedSizeofData(const uint32_t imageWidth,
+        const uint32_t imageHeight) const
     {
-        const size_t bytesPerRow = GetBytesPerRow(imageWidth);
+        const size_t bytesPerRow = GetBlockAlignedBytesPerRow(imageWidth);
         const size_t rowCount = GetBlockRowCount(imageHeight);
         MLG_ABORTIF(bytesPerRow > 0 && std::numeric_limits<size_t>::max() / bytesPerRow < rowCount,
             "Texture size too large: {} x {}",
@@ -212,10 +213,12 @@ public:
     }
 
     /// Returns the row-aligned size of the texture data in bytes, given the image width and height.
-    constexpr size_t GetPaddedSizeofData(
-        const uint32_t imageWidth, const uint32_t imageHeight, const uint32_t alignment) const
+    constexpr size_t GetBlockAlignedSizeofDataWithPadding(const uint32_t imageWidth,
+        const uint32_t imageHeight,
+        const uint32_t rowStrideAlignment) const
     {
-        const size_t bytesPerRow = GetPaddedBytesPerRow(imageWidth, alignment);
+        const size_t bytesPerRow =
+            GetBlockAlignedBytesPerRowWithPadding(imageWidth, rowStrideAlignment);
         const size_t rowCount = GetBlockRowCount(imageHeight);
 
         MLG_ABORTIF(bytesPerRow > 0 && std::numeric_limits<size_t>::max() / bytesPerRow < rowCount,
@@ -226,8 +229,8 @@ public:
         return rowCount * bytesPerRow;
     }
 
-    /// Returns the total size of the texture data for all mip levels, given the image width,
-    /// height, and mip count. This does not include row padding.
+    /// Returns the total number of block-aligned byte in the texture for all mip levels, given the
+    /// image width, height, and mip count. This does not include row padding.
     constexpr size_t GetTotalSizeofMipData(
         const uint32_t imageWidth, const uint32_t imageHeight, const uint32_t mipCount) const
     {
@@ -239,7 +242,7 @@ public:
         {
             const uint32_t mipWidth = std::max(imageWidth >> mip, 1u);
             const uint32_t mipHeight = std::max(imageHeight >> mip, 1u);
-            const size_t sizeOfMip = GetSizeofData(mipWidth, mipHeight);
+            const size_t sizeOfMip = GetBlockAlignedSizeofData(mipWidth, mipHeight);
 
             MLG_ABORTIF(kMaxSize - sizeofData < sizeOfMip,
                 "Texture size too large for mip level {}: {} + {} > {}",
@@ -269,7 +272,8 @@ public:
         {
             const uint32_t mipWidth = std::max(imageWidth >> mip, 1u);
             const uint32_t mipHeight = std::max(imageHeight >> mip, 1u);
-            const size_t sizeOfMip = GetPaddedSizeofData(mipWidth, mipHeight, alignment);
+            const size_t sizeOfMip =
+                GetBlockAlignedSizeofDataWithPadding(mipWidth, mipHeight, alignment);
 
             MLG_ABORTIF(kMaxSize - sizeofData < sizeOfMip,
                 "Texture size too large for mip level {}: {} + {} > {}",
@@ -300,7 +304,8 @@ public:
     }
 
     /// Checks if the texture dimensions are within the allowed limits.
-    constexpr Result<> CheckDimensions(const uint32_t width, const uint32_t height, const uint32_t mipCount) const 
+    constexpr Result<> CheckDimensions(
+        const uint32_t width, const uint32_t height, const uint32_t mipCount) const
     {
         MLG_CHECK(!IsUnknown(), "Texture format is unknown");
 
@@ -329,15 +334,13 @@ public:
     /// Returns the texture format for raw RGBA images.
     static consteval const TextureFormat& GetRGBA()
     {
-        static constexpr const TextureFormat RGBA(
-                FormatIdentifier::RGBA,
-                wgpu::TextureFormat::RGBA8UnormSrgb,
-                kDefaultChannelCount,
-                4,
-                1,
-                TextureFormat::FileExtension{ "" },
-                TextureFormat::FourCC{ 'r', 'g', 'b', 'a' }
-            );
+        static constexpr const TextureFormat RGBA(FormatIdentifier::RGBA,
+            wgpu::TextureFormat::RGBA8UnormSrgb,
+            kDefaultChannelCount,
+            4,
+            1,
+            TextureFormat::FileExtension{ "" },
+            TextureFormat::FourCC{ 'r', 'g', 'b', 'a' });
         return RGBA;
     }
 
@@ -356,15 +359,13 @@ public:
     /// Returns an unknown texture format.
     static consteval const TextureFormat& GetUnknown()
     {
-        static constexpr const TextureFormat Unknown(
-            FormatIdentifier::Unknown,
+        static constexpr const TextureFormat Unknown(FormatIdentifier::Unknown,
             wgpu::TextureFormat::Undefined,
             0,
             0,
             0,
             TextureFormat::FileExtension{ "" },
-            TextureFormat::FourCC{ 'u', 'n', 'k', ' ' }
-        );
+            TextureFormat::FourCC{ 'u', 'n', 'k', ' ' });
         return Unknown;
     }
 
@@ -380,8 +381,8 @@ public:
 private:
     FormatIdentifier m_FormatId{ FormatIdentifier::Unknown };
     wgpu::TextureFormat m_WgpuFormat{ wgpu::TextureFormat::Undefined };
-    size_t m_ChannelCount{ 0 };   // Number of color channels for the texture format
-    size_t m_BytesPerBlock{ 0 };  // Number of bytes per compressed block
+    size_t m_ChannelCount{ 0 };     // Number of color channels for the texture format
+    size_t m_BytesPerBlock{ 0 };    // Number of bytes per compressed block
     uint32_t m_BlockDimension{ 0 }; // Width/height of a block in texels
     FileExtension m_Extension;      // File extension associated with the texture format
     FourCC m_HeaderFourcc;          // FourCC code used in the texture header to identify the format
@@ -404,11 +405,13 @@ struct TextureHeader
     static bool IsMlgTexture(const std::span<const std::byte> buffer);
 
     /// Extracts a texture header from the buffer.
-    /// Returns a pointer to the texture header if the buffer contains a valid header, or nullptr otherwise.
+    /// Returns a pointer to the texture header if the buffer contains a valid header, or nullptr
+    /// otherwise.
     static const TextureHeader* GetHeader(const std::span<const std::byte> buffer);
 
     /// Extracts the pixel bytes from the buffer, excluding the header.
-    static Result<std::span<const std::byte>> GetPixelBytes(const std::span<const std::byte> buffer);
+    static Result<std::span<const std::byte>> GetPixelBytes(
+        const std::span<const std::byte> buffer);
 
     static Result<> ValidateFile(const std::span<const std::byte> fileBuffer);
 

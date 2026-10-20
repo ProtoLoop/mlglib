@@ -389,6 +389,7 @@ set(SSG_SOURCES
   src/GpuTypes.cpp
   src/ImGuiRenderer.cpp
   src/InputMapper.cpp
+  src/Ktx2.cpp
   src/Level.cpp
   src/Log.cpp
   src/PerfMetrics.cpp
@@ -426,6 +427,7 @@ set(SSG_HEADERS
   src/GpuHelper.h
   src/GpuTransformPass.h
   src/GpuTypes.h
+  src/Ktx2.h
   src/ImGuiRenderer.h
   src/inlist.h
   src/InplaceString.h

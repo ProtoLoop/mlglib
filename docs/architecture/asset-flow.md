@@ -77,7 +77,7 @@ It then generates a full mip chain down to 1×1 and compresses each level.
 Partial blocks in smaller levels repeat edge pixels instead of rescaling the
 image.
 
-Each cooked texture file contains a header with the base dimensions, format,
+Each custom `.bc7` texture file contains a header with the base dimensions, format,
 and mip count, followed by tightly packed mip levels from largest to smallest.
 The file does not include GPU upload-row padding.
 
@@ -100,3 +100,41 @@ encoding is available, it uses the original PNG/JPEG file. The image is decoded
 at runtime and uploaded without mipmaps (only the base level).
 [TextureFetcher](../../src/TextureFetcher.cpp) manages the collection of
 texture-loading tasks.
+
+## Supported KTX2 subset
+
+The cooker also writes KTX2 files containing the same compressed mip data.
+`TextureLoader::LoadFromFile()` recognizes KTX2 by its file identifier and loads
+the following subset:
+
+- No supercompression. `supercompressionScheme` must be zero and supercompression
+  global data must be absent. The mip payloads are already GPU block-compressed
+  data. The loader does not inflate Zstandard or zlib data, or transcode Basis
+  Universal textures.
+- Non-array 2D textures with one face. Texture arrays, cubemaps, and 3D textures
+  are unsupported.
+- sRGB transfer with BT.709 primaries and straight alpha. Premultiplied alpha,
+  linear transfer, and other color primaries are unsupported. The loader does
+  not convert color spaces or alpha representations.
+- Currently, `VK_FORMAT_BC7_SRGB_BLOCK` is the only supported pixel format. The
+  device must support BC7. The Data Format Descriptor must match the cooker's
+  single basic descriptor, including its color and alpha conventions.
+- An explicit, nonzero mip count, up to the maximum for the base dimensions.
+  Partial mip chains are accepted. The loader does not generate missing mips.
+- Base dimensions from 4 to 4096 pixels in each direction, divisible by four,
+  following the current engine's BC7 dimension requirements. Small mip levels
+  still occupy whole compression blocks.
+
+Header, descriptor, key/value section, and mip ranges are checked before staging.
+Each mip must have the expected byte size and alignment and must not overlap
+metadata or another mip. Unsupported representations and invalid ranges fail
+loading.
+
+Optional key/value data is skipped after checking its section range. Orientation,
+swizzle, and other key/value metadata are not applied, so files must already use
+the orientation and channel interpretation expected by the engine.
+
+KTX2 stores its mip payloads smallest first. The loader uses the level index to
+stage each mip into its destination range, adding upload-row padding on the
+worker. Staging-buffer creation and GPU commit stay on the main thread.
+`LoadFromResource()` continues to select the custom `.bc7` files.

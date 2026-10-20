@@ -37,7 +37,7 @@ Result<std::span<std::byte>>
 GpuTextureStagingBuffer::GetMappedRange()
 {
     MLG_CHECKV(m_StagingBuffer, "Invalid staging buffer");
-    
+
     return m_MappedMemory;
 }
 
@@ -54,60 +54,60 @@ GpuTextureStagingBuffer::StageBytes(const std::span<const std::byte> srcBytes)
         srcBytes.size(),
         expectedSize);
 
-    auto mappedRangeResult = GetMappedRange();
-    MLG_CHECK(mappedRangeResult, "Failed to get mapped range");
-
-    const std::span mappedMemory = *mappedRangeResult;
-
-    MLG_CHECKV(srcBytes.size() <= mappedMemory.size(),
-        "Source byte size exceeds mapped memory size: {} > {}",
-        srcBytes.size(),
-        mappedMemory.size());
-
-    uint32_t mipWidth = m_Width;
-    uint32_t mipHeight = m_Height;
-
     size_t srcOffset = 0;
-    size_t dstOffset = 0;
-
     for(uint32_t mip = 0; mip < m_MipCount; ++mip)
     {
-        const size_t srcRowStride = m_Format.GetBytesPerRow(mipWidth);
-
-        // Bytes must be padded to the aligned row stride
-        const size_t dstRowStride =
-            m_Format.GetPaddedBytesPerRow(mipWidth, GpuHelper::kTextureStrideAlignment);
-
-        std::span srcRow = srcBytes.subspan(srcOffset);
-        std::span dstRow = mappedMemory.subspan(dstOffset);
-
-        if(dstRowStride == srcRowStride)
-        {
-            const size_t mipSize = m_Format.GetSizeofData(mipWidth, mipHeight);
-            ::memcpy(dstRow.data(), srcRow.data(), mipSize);
-        }
-        else
-        {
-            const size_t numRows = m_Format.GetBlockRowCount(mipHeight);
-
-            for(uint32_t y = 0; y < numRows;
-                ++y, dstRow = dstRow.subspan(dstRowStride), srcRow = srcRow.subspan(srcRowStride))
-            {
-                ::memcpy(dstRow.data(), srcRow.data(), srcRowStride);
-            }
-        }
-
-        srcOffset += m_Format.GetSizeofData(mipWidth, mipHeight);
-        dstOffset +=
-            m_Format.GetPaddedSizeofData(mipWidth, mipHeight, GpuHelper::kTextureStrideAlignment);
-
-        mipWidth >>= 1;
-        mipHeight >>= 1;
-
-        mipWidth = std::max(mipWidth, 1u);
-        mipHeight = std::max(mipHeight, 1u);
+        const uint32_t width = std::max(m_Width >> mip, 1u);
+        const uint32_t height = std::max(m_Height >> mip, 1u);
+        const size_t mipSize = m_Format.GetBlockAlignedSizeofData(width, height);
+        MLG_CHECK(StageMipBytes(mip, srcBytes.subspan(srcOffset, mipSize)));
+        srcOffset += mipSize;
     }
+    return Result<>::Ok;
+}
 
+Result<>
+GpuTextureStagingBuffer::StageMipBytes(const uint32_t mipLevel,
+    const std::span<const std::byte> srcBytes)
+{
+    MLG_CHECKV(m_StagingBuffer, "Invalid staging buffer");
+    MLG_CHECKV(mipLevel < m_MipCount, "Mip index out of range");
+
+    const uint32_t width = std::max(m_Width >> mipLevel, 1u);
+    const uint32_t height = std::max(m_Height >> mipLevel, 1u);
+    MLG_CHECKV(srcBytes.size() == m_Format.GetBlockAlignedSizeofData(width, height),
+        "Source mip byte size does not match expected size");
+
+    const size_t dstOffset = m_Format.GetTotalPaddedSizeofMipData(m_Width,
+        m_Height,
+        mipLevel,
+        GpuHelper::kTextureStrideAlignment);
+    const size_t dstSize =
+        m_Format.GetBlockAlignedSizeofDataWithPadding(width, height, GpuHelper::kTextureStrideAlignment);
+    auto mappedRangeResult = GetMappedRange();
+    MLG_CHECK(mappedRangeResult, "Failed to get mapped range");
+    MLG_CHECKV(dstOffset <= mappedRangeResult->size()
+            && dstSize <= mappedRangeResult->size() - dstOffset,
+        "Mip exceeds mapped memory size");
+
+    const std::span dstBytes = mappedRangeResult->subspan(dstOffset, dstSize);
+    const size_t srcRowStride = m_Format.GetBlockAlignedBytesPerRow(width);
+    const size_t dstRowStride =
+        m_Format.GetBlockAlignedBytesPerRowWithPadding(width, GpuHelper::kTextureStrideAlignment);
+    if(dstRowStride == srcRowStride)
+    {
+        ::memcpy(dstBytes.data(), srcBytes.data(), srcBytes.size());
+    }
+    else
+    {
+        const size_t numRows = m_Format.GetBlockRowCount(height);
+        for(size_t row = 0; row < numRows; ++row)
+        {
+            ::memcpy(dstBytes.subspan(row * dstRowStride).data(),
+                srcBytes.subspan(row * srcRowStride).data(),
+                srcRowStride);
+        }
+    }
     return Result<>::Ok;
 }
 
@@ -175,7 +175,7 @@ GpuTextureStagingBuffer::Commit(wgpu::CommandEncoder cmdEncoder)
     for(uint32_t mip = 0; mip < m_MipCount; ++mip)
     {
         const size_t rowStride =
-            m_Format.GetPaddedBytesPerRow(mipWidth, GpuHelper::kTextureStrideAlignment);
+            m_Format.GetBlockAlignedBytesPerRowWithPadding(mipWidth, GpuHelper::kTextureStrideAlignment);
 
         const wgpu::TexelCopyBufferInfo copySrc = //
             {
@@ -210,7 +210,7 @@ GpuTextureStagingBuffer::Commit(wgpu::CommandEncoder cmdEncoder)
         cmdEncoder.CopyBufferToTexture(&copySrc, &copyDst, &copySize);
 
         offset +=
-            m_Format.GetPaddedSizeofData(mipWidth, mipHeight, GpuHelper::kTextureStrideAlignment);
+            m_Format.GetBlockAlignedSizeofDataWithPadding(mipWidth, mipHeight, GpuHelper::kTextureStrideAlignment);
 
         mipWidth = std::max(1u, mipWidth >> 1);
         mipHeight = std::max(1u, mipHeight >> 1);

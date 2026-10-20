@@ -371,7 +371,7 @@ CreateDefaultTexture(GpuHelper& gpuHelper)
     void* p = mappedRangeResult->data();
     const std::span<uint8_t> mappedRange(static_cast<uint8_t*>(p), mappedRangeResult->size());
 
-    const size_t dstRowStride = kDefaultTextureFormat.GetPaddedBytesPerRow(kDefaultTextureWidth,
+    const size_t dstRowStride = kDefaultTextureFormat.GetBlockAlignedBytesPerRowWithPadding(kDefaultTextureWidth,
         GpuHelper::kTextureStrideAlignment);
 
     for(size_t y = 0; y < kDefaultTextureHeight; ++y)

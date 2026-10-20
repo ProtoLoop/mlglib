@@ -136,7 +136,7 @@ Level::CreateTask::OnUpdate()
                 m_ResourceBundle = std::move(*bundleResult);
                 m_Scene = std::move(*sceneResult);
 
-                if(!CreateView(DirectoryPath::Current(), m_ResourceBundle, *m_Scene))
+                if(!CreateView(DirectoryPath::GetCurrentDirectory(), m_ResourceBundle, *m_Scene))
                 {
                     MLG_ERROR("Failed to create view");
                     m_Stage = Stage::Failed;
@@ -197,7 +197,7 @@ Level::CreateTask::OnUpdate()
                     MLG_ERROR("Failed to create scene from resource bundle: {}", *pathResult);
                     m_Stage = Stage::Failed;
                 }
-                else if(const auto parentPathResult = DirectoryPath::ParentPath(*pathResult);
+                else if(const auto parentPathResult = DirectoryPath::GetParentPath(*pathResult);
                     !parentPathResult)
                 {
                     MLG_ERROR("Failed to get parent path for {}", *pathResult);
@@ -242,7 +242,7 @@ Level::CreateTask::OnUpdate()
                     MLG_ERROR("Failed to create scene from resource bundle: {}", *pathResult);
                     m_Stage = Stage::Failed;
                 }
-                else if(const auto parentPathResult = DirectoryPath::ParentPath(*pathResult);
+                else if(const auto parentPathResult = DirectoryPath::GetParentPath(*pathResult);
                     !parentPathResult)
                 {
                     MLG_ERROR("Failed to get parent path for {}", *pathResult);

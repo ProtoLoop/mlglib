@@ -343,8 +343,8 @@ EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
     const size_t dstRowStride =
         bc7Format.GetPaddedBytesPerRow(blockAlignedWidth, GpuHelper::kTextureStrideAlignment);*/
 
-    const size_t outputByteCount = bc7Format.GetSizeofData(srcWidth, srcHeight);
-    const size_t dstRowStride = bc7Format.GetBytesPerRow(blockAlignedWidth);
+    const size_t outputByteCount = bc7Format.GetBlockAlignedSizeofData(srcWidth, srcHeight);
+    const size_t dstRowStride = bc7Format.GetBlockAlignedBytesPerRow(blockAlignedWidth);
 
     std::vector<std::byte> outputBytes(outputByteCount);
 

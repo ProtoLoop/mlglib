@@ -41,7 +41,8 @@ public:
     {
         MLG_CHECK(!format.IsUnknown(), "Unknown texture format");
         MLG_CHECKV(format.CheckDimensions(w, h, 1));
-        MLG_CHECK(!bytes.empty(), "Byte data cannot be empty");
+        MLG_CHECK(bytes.size() == format.GetBlockAlignedSizeofData(w, h),
+            "Byte data size does not match expected dimensions and format");
 
         return MipImage(w, h, format, std::move(bytes));
     }

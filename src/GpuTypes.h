@@ -14,7 +14,7 @@ class GpuHelper;
 
 /// Owns a mapped staging buffer and metadata for creating a GPU texture.
 /// Create, move, commit, and destroy this object on the main thread.
-/// StageBytes() may run on a worker with exclusive access to the object and its
+/// StageBytes() and StageMipBytes() may run on a worker with exclusive access to the object and its
 /// mapped memory. That work must finish before moving, committing, or destroying it.
 ///
 /// Commit() creates and returns the GPU texture, consumes the staging buffer,
@@ -36,6 +36,9 @@ public:
     /// staging buffer. Source rows must not include upload-alignment padding.
     /// Adds the required row padding separately for each mip level.
     Result<> StageBytes(const std::span<const std::byte> srcBytes);
+
+    /// Copies one tightly packed mip into its staging range, adding padding if necessary.
+    Result<> StageMipBytes(uint32_t mipLevel, std::span<const std::byte> srcBytes);
 
     /// Commits staged bytes to the GPU texture.
     /// Internally creates a command encoder and submits the resulting command buffer to the GPU.

@@ -79,9 +79,11 @@ private:
 
     Result<> BeginDecode();
 
+    static void DecodeKtx2(void* userData);
     static void DecodeMlg(void* userData);
     static void DecodeStb(void* userData);
 
+    Result<> DecodeKtx2();
     Result<> DecodeMlg();
     Result<> DecodeStb();
 
