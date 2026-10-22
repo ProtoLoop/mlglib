@@ -16,6 +16,14 @@ are too specific to be principles and too small to be patterns.
 - Use assertions and the project's verification helpers for programming errors
   and violated invariants.
 
+## Switch statements
+
+Avoid `default` in switches over enums. Handle each enumerator explicitly so
+compiler warnings identify missing cases when the enum changes.
+
+Use `default` when a fallback is intentional, such as switching over an
+open-ended set of integer values.
+
 ## Allocation and containers
 
 - Heap allocation is acceptable during program startup.
