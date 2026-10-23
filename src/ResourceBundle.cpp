@@ -2,10 +2,13 @@
 
 #include "Defer.h"
 #include "Result.h"
+#include "SafeInteger.h"
 #include "SceneTypes.h"
 
 #include <cstddef>
+#include <deque>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <ranges>
@@ -79,7 +82,12 @@ constexpr OffsetType kInvalidOffset = ResourceBundle::kInvalidOffset;
 constexpr size_t kMaxBundleSize = ResourceBundle::kMaxBundleSize;
 
 template<typename T>
-constexpr size_t kMaxVectorSize = std::min(ResourceBundle::kMaxCount, std::vector<T>().max_size());
+constexpr size_t kMaxVectorSize = std::min( //
+    {
+        ResourceBundle::kMaxCount,
+        std::vector<T>().max_size(),
+        static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+    });
 
 struct FlatNodeDef
 {
@@ -95,6 +103,28 @@ struct IndexEntry
     T Value;
     size_t Index;
 };
+
+/// Used when flattening a node hierarchy into a breadth-first ordered vector of FlatNodeDef objects.
+struct PendingNode
+{
+    NodeDefPointer Node;
+    IndexType ParentIndex;
+};
+
+constexpr size_t kMaxCharCount = kMaxVectorSize<char>;
+constexpr size_t kMaxVertexCount = kMaxVectorSize<Vertex>;
+constexpr size_t kMaxIndexCount = kMaxVectorSize<VertexIndex>;
+constexpr size_t kMaxMeshCount = std::min( //
+    {
+        kMaxVectorSize<MeshResource>,
+        kMaxVectorSize<MeshDef>,
+        static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+    });
+
+using MaterialLookup = std::map<MaterialDef, IndexEntry<MaterialResource>>;
+using TextureLookup = std::map<std::string_view, IndexEntry<TextureResource>>;
+using StringLookup = std::map<std::string_view, StringResource>;
+using ModelLookup = std::map<std::string_view, IndexEntry<ModelResource>>;
 
 /// Converts a std::map to a std::vector by extracting the values.
 template<typename K, typename V>
@@ -146,32 +176,31 @@ AppendPad(std::vector<std::byte>& buffer)
 Result<std::vector<FlatNodeDef>>
 FlattenNodesBreadthFirst(const std::span<const RootNodeDef> rootNodeDefs)
 {
-    struct PendingNode
-    {
-        NodeDefPointer Node;
-        IndexType ParentIndex;
-    };
-
     std::vector<FlatNodeDef> flatNodes;
-    std::vector<PendingNode> pendingNodes;
+    std::deque<PendingNode> pendingNodes;
 
-    constexpr size_t kMaxNodeCount =
-        std::min(kMaxVectorSize<FlatNodeDef>, kMaxVectorSize<PendingNode>);
+    static constexpr size_t kMaxSceneNodeCount = std::min( //
+        {
+            kMaxVectorSize<FlatNodeDef>,
+            flatNodes.max_size(),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
+
+    MLG_CHECK(
+        !safeint::AddWillOverflow(pendingNodes.size(), rootNodeDefs.size(), kMaxSceneNodeCount),
+        "Too many nodes defined");
 
     // Queue root nodes for processing.
     for(const RootNodeDef& rootNodeDef : rootNodeDefs)
     {
-        MLG_CHECKV(pendingNodes.size() < kMaxNodeCount, "Too many nodes defined");
         pendingNodes.emplace_back(&rootNodeDef, kInvalidIndex);
     }
 
-    for(size_t pendingIndex = 0; pendingIndex < pendingNodes.size(); ++pendingIndex)
+     while(!pendingNodes.empty())
     {
-        const PendingNode& pendingNode = pendingNodes[pendingIndex];
-
+        const PendingNode pendingNode = pendingNodes.front();
+        pendingNodes.pop_front();
         const size_t curNodeIndex = flatNodes.size();
-
-        MLG_CHECKV(curNodeIndex < kMaxNodeCount, "Too many nodes defined");
 
         const FlatNodeDef flatNodeDef //
             {
@@ -179,6 +208,8 @@ FlattenNodesBreadthFirst(const std::span<const RootNodeDef> rootNodeDefs)
                 .ParentIndex = pendingNode.ParentIndex,
                 .FirstChildIndex = kInvalidIndex,
             };
+
+        MLG_CHECK(flatNodes.size() < kMaxSceneNodeCount, "Too many nodes defined");
 
         flatNodes.push_back(flatNodeDef);
 
@@ -188,7 +219,7 @@ FlattenNodesBreadthFirst(const std::span<const RootNodeDef> rootNodeDefs)
             {
                 for(const ChildNodeDef& childNodeDef : nodeDef->Children)
                 {
-                    MLG_CHECK(pendingNodes.size() < kMaxNodeCount, "Too many nodes defined");
+                    MLG_CHECK(pendingNodes.size() < kMaxSceneNodeCount, "Too many nodes defined");
 
                     const PendingNode pendingChildNode //
                         {
@@ -226,22 +257,19 @@ FlattenNodesBreadthFirst(const std::span<const RootNodeDef> rootNodeDefs)
 Result<std::vector<const MeshDef*>>
 CollectMeshDefs(const std::span<const ModelDef> modelDefs)
 {
-    constexpr size_t kMaxMeshCount = kMaxVectorSize<MeshDef>;
-
     size_t count = 0;
     for(const ModelDef& modelDef : modelDefs)
     {
         const size_t meshCount = modelDef.MeshDefs.size();
         MLG_CHECKV(meshCount > 0, "Model has no meshes: {}", modelDef.Name);
-        MLG_CHECKV(meshCount <= kMaxMeshCount, "Mesh count out of range: {}", modelDef.Name);
-        MLG_CHECKV(kMaxMeshCount - count >= meshCount,
-            "Mesh count out of range: {}",
+        MLG_CHECKV(!safeint::AddWillOverflow(count, meshCount, kMaxMeshCount),
+            "Mesh count overflow: {}",
             modelDef.Name);
+
         count += meshCount;
     }
 
     std::vector<const MeshDef*> meshDefs;
-    static_assert(kMaxMeshCount <= meshDefs.max_size());
     meshDefs.reserve(count);
 
     for(const ModelDef& modelDef : modelDefs)
@@ -257,23 +285,14 @@ CollectMeshDefs(const std::span<const ModelDef> modelDefs)
 
 /// Adds a string to the string resource map and character buffe.
 Result<StringResource>
-AddString(std::map<std::string_view, StringResource>& stringResourceMap,
-    std::vector<char>& chars,
-    const std::string_view str)
+AddString(StringLookup& stringResourceMap, std::vector<char>& chars, const std::string_view str)
 {
-    constexpr size_t kMaxCharCount = kMaxVectorSize<char>;
-    const size_t kMaxStringCount =
-        std::min(kMaxVectorSize<StringResource>, stringResourceMap.max_size());
-
     MLG_CHECKV(!str.empty(), "String is empty");
 
     MLG_CHECKV(!stringResourceMap.contains(str), "String already exists: {}", str);
 
     const size_t strLen = str.length();
     const size_t charIndex = chars.size();
-    MLG_CHECKV(strLen <= kMaxCharCount, "String length out of bounds: {}", str);
-    MLG_CHECKV(kMaxCharCount - charIndex >= strLen, "Char count out of bounds: {}", str);
-    MLG_CHECKV(stringResourceMap.size() < kMaxStringCount, "String count out of range: {}", str);
 
     const StringResource sr = StringResource //
         {
@@ -281,19 +300,29 @@ AddString(std::map<std::string_view, StringResource>& stringResourceMap,
             .Length = static_cast<IndexType>(strLen),
         };
 
+    MLG_CHECKV(!safeint::AddWillOverflow(charIndex, strLen, kMaxCharCount),
+        "Character buffer overflow: {}", str);
+
     chars.append_range(str);
 
+    static const size_t kMaxStringCount = std::min( //
+        {
+            StringLookup().max_size(),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
+
+    MLG_CHECKV(stringResourceMap.size() < kMaxStringCount, "String count out of range: {}", str);
     stringResourceMap.emplace(str, sr);
 
     return sr;
 }
 
-Result<std::map<std::string_view, StringResource>>
+Result<StringLookup>
 CollectStrings(const std::span<const FlatNodeDef> flatNodeDefs,
     const std::span<const MeshDef* const> meshDefs,
     std::vector<char>& chars)
 {
-    std::map<std::string_view, StringResource> stringResourceMap;
+    StringLookup stringResourceMap;
 
     chars.clear();
 
@@ -326,19 +355,22 @@ CollectStrings(const std::span<const FlatNodeDef> flatNodeDefs,
 
     return stringResourceMap;
 }
-Result<std::map<std::string_view, IndexEntry<TextureResource>>>
+Result<TextureLookup>
 CollectTextures(const std::span<const MeshDef* const> meshDefs,
-    const std::map<std::string_view, StringResource>& stringIndexMap,
+    const StringLookup& stringIndexMap,
     const ResourceBundleBuilder::Options& options)
 {
     MLG_CHECKV(0 == (options.TextureEncodings & ~TextureResourceEncoding::All),
         "Invalid texture encodings specified: {:#08b}",
         options.TextureEncodings);
 
-    std::map<std::string_view, IndexEntry<TextureResource>> textureIndexMap;
+    static const size_t kMaxTextureCount = std::min( //
+        {
+            TextureLookup().max_size(),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
 
-    const size_t kMaxTextureCount =
-        std::min(kMaxVectorSize<TextureResource>, textureIndexMap.max_size());
+    TextureLookup textureIndexMap;
 
     for(const MeshDef* meshDef : meshDefs)
     {
@@ -383,21 +415,22 @@ CollectTextures(const std::span<const MeshDef* const> meshDefs,
     return textureIndexMap;
 }
 
-Result<std::map<MaterialDef, IndexEntry<MaterialResource>>>
+Result<MaterialLookup>
 CollectMaterials(const std::span<const MeshDef* const> meshDefs,
-    const std::map<std::string_view, IndexEntry<TextureResource>>& textureIndexMap)
+    const TextureLookup& textureIndexMap)
 {
-    std::map<MaterialDef, IndexEntry<MaterialResource>> materialIndexMap;
+    MaterialLookup materialIndexMap;
 
-    const size_t kMaxMaterialCount =
-        std::min(kMaxVectorSize<MaterialResource>, materialIndexMap.max_size());
+    static const size_t kMaxMaterialCount = std::min( //
+        {
+            MaterialLookup().max_size(),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
 
     for(const MeshDef* meshDef : meshDefs)
     {
         if(!materialIndexMap.contains(meshDef->MaterialDef))
         {
-            MLG_CHECKV(materialIndexMap.size() < kMaxMaterialCount, "Material index out of range");
-
             const MaterialDef& materialDef = meshDef->MaterialDef;
 
             IndexType baseTextureIndex = kInvalidIndex;
@@ -421,6 +454,8 @@ CollectMaterials(const std::span<const MeshDef* const> meshDefs,
                     .Roughness = materialDef.Roughness,
                 };
 
+            MLG_CHECKV(materialIndexMap.size() < kMaxMaterialCount, "Material index out of range");
+
             // Index will be filled later
             materialIndexMap.emplace(meshDef->MaterialDef, materialResource);
         }
@@ -439,19 +474,19 @@ CollectMaterials(const std::span<const MeshDef* const> meshDefs,
 Result<std::vector<Vertex>>
 CollectVertices(const std::span<const MeshDef* const> meshDefs)
 {
-    constexpr size_t kMaxVertexCount = kMaxVectorSize<Vertex>;
+    using VertexVector = std::vector<Vertex>;
 
     size_t count = 0;
     for(const MeshDef* meshDef : meshDefs)
     {
         const size_t vtxCount = meshDef->Vertices.size();
         MLG_CHECKV(vtxCount > 0, "Vertex count must be greater than zero");
-        MLG_CHECKV(vtxCount <= kMaxVertexCount, "Vertex count out of range");
-        MLG_CHECKV(kMaxVertexCount - count >= vtxCount, "Vertex count out of range");
+        MLG_CHECKV(!safeint::AddWillOverflow(count, vtxCount, kMaxVertexCount),
+            "Vertex count overflow");
         count += vtxCount;
     }
 
-    std::vector<Vertex> vertices;
+    VertexVector vertices;
     vertices.reserve(count);
 
     for(const MeshDef* meshDef : meshDefs)
@@ -465,15 +500,13 @@ CollectVertices(const std::span<const MeshDef* const> meshDefs)
 Result<std::vector<VertexIndex>>
 CollectIndices(const std::span<const MeshDef* const> meshDefs)
 {
-    constexpr size_t kMaxIndexCount = kMaxVectorSize<VertexIndex>;
-
     size_t count = 0;
     for(const MeshDef* meshDef : meshDefs)
     {
         const size_t idxCount = meshDef->Indices.size();
         MLG_CHECKV(idxCount >= 3, "Index count must be at least three");
-        MLG_CHECKV(idxCount <= kMaxIndexCount, "Index count out of range");
-        MLG_CHECKV(kMaxIndexCount - count >= idxCount, "Index count out of range");
+        MLG_CHECKV(!safeint::AddWillOverflow(count, idxCount, kMaxIndexCount),
+            "Index count overflow");
         count += idxCount;
     }
 
@@ -495,10 +528,8 @@ CollectIndices(const std::span<const MeshDef* const> meshDefs)
 
 Result<std::vector<MeshResource>>
 CollectMeshes(const std::span<const MeshDef* const> meshDefs,
-    const std::map<MaterialDef, IndexEntry<MaterialResource>>& materialIndexMap)
+    const MaterialLookup& materialIndexMap)
 {
-    constexpr size_t kMaxMeshCount = kMaxVectorSize<MeshResource>;
-
     MLG_CHECKV(meshDefs.size() <= kMaxMeshCount, "Mesh count out of range");
 
     std::vector<MeshResource> meshes;
@@ -532,6 +563,11 @@ CollectMeshes(const std::span<const MeshDef* const> meshDefs,
             };
         meshes.push_back(mesh);
 
+        MLG_CHECKV(!safeint::AddWillOverflow(indexIndex, indexCount, kMaxIndexCount),
+            "Index count overflow");
+        MLG_CHECKV(!safeint::AddWillOverflow(vertexIndex, vertexCount, kMaxVertexCount),
+            "Vertex count overflow");
+
         indexIndex += indexCount;
         vertexIndex += vertexCount;
     }
@@ -539,14 +575,16 @@ CollectMeshes(const std::span<const MeshDef* const> meshDefs,
     return meshes;
 }
 
-Result<std::map<std::string_view, IndexEntry<ModelResource>>>
+Result<ModelLookup>
 CollectModels(const std::span<const ModelDef> modelDefs, const std::span<const MeshResource> meshes)
 {
-    std::map<std::string_view, IndexEntry<ModelResource>> modelIndexMap;
+    ModelLookup modelIndexMap;
 
-    const size_t kMaxModelCount = std::min(kMaxVectorSize<ModelResource>, modelIndexMap.max_size());
-
-    MLG_CHECKV(modelDefs.size() <= kMaxModelCount, "Model count out of range");
+    static const size_t kMaxModelCount = std::min( //
+        {
+            ModelLookup().max_size(),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
 
     size_t meshIndex = 0;
 
@@ -574,7 +612,6 @@ CollectModels(const std::span<const ModelDef> modelDefs, const std::span<const M
         MLG_CHECKV(!modelName.empty(), "Model name is empty");
 
         MLG_CHECKV(!modelIndexMap.contains(modelName), "Duplicate model name: {}", modelName);
-        MLG_CHECKV(modelIndexMap.size() < kMaxModelCount, "Model index out of range");
 
         const ModelResource model //
             {
@@ -582,6 +619,8 @@ CollectModels(const std::span<const ModelDef> modelDefs, const std::span<const M
                 .MeshCount = static_cast<IndexType>(meshCount),
                 .BoundingBox = boundingBox,
             };
+
+        MLG_CHECKV(modelIndexMap.size() < kMaxModelCount, "Model index out of range");
 
         // Index will be filled later
         modelIndexMap.emplace(modelName, model);
@@ -601,9 +640,15 @@ CollectModels(const std::span<const ModelDef> modelDefs, const std::span<const M
 
 Result<std::vector<ModelInstanceResource>>
 CollectModelInstances(const std::span<const FlatNodeDef> flatNodeDefs,
-    const std::map<std::string_view, IndexEntry<ModelResource>>& modelIndexMap)
+    const ModelLookup& modelIndexMap)
 {
-    constexpr size_t kMaxModelInstanceCount = kMaxVectorSize<ModelInstanceResource>;
+    std::vector<ModelInstanceResource> modelInstances;
+
+    static constexpr size_t kMaxModelInstanceCount = std::min( //
+        {
+            static_cast<size_t>(kMaxVectorSize<ModelInstanceResource>),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
 
     size_t count = 0;
     for(const FlatNodeDef& flatNodeDef : flatNodeDefs)
@@ -613,12 +658,12 @@ CollectModelInstances(const std::span<const FlatNodeDef> flatNodeDefs,
                 flatNodeDef.NodeDefPtr);
         if(hasModel)
         {
-            MLG_CHECKV(count < kMaxModelInstanceCount, "Model instance count out of range");
+            MLG_CHECKV(!safeint::AddWillOverflow(count, 1uz, kMaxModelInstanceCount),
+                "Model instance count overflow");
             ++count;
         }
     }
 
-    std::vector<ModelInstanceResource> modelInstances;
     modelInstances.reserve(count);
 
     for(size_t nodeIndex = 0; nodeIndex < flatNodeDefs.size(); ++nodeIndex)
@@ -717,7 +762,13 @@ CreateCollider(const ColliderDef& colliderDef)
 Result<std::vector<ColliderResource>>
 CollectColliders(const std::span<const RootNodeDef> nodeDefs)
 {
-    constexpr size_t kMaxColliderCount = kMaxVectorSize<ColliderResource>;
+    std::vector<ColliderResource> colliders;
+
+    static const size_t kMaxColliderCount = std::min( //
+        {
+            static_cast<size_t>(kMaxVectorSize<ColliderResource>),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
 
     size_t count = 0;
     for(const RootNodeDef& nodeDef : nodeDefs)
@@ -725,13 +776,12 @@ CollectColliders(const std::span<const RootNodeDef> nodeDefs)
         if(nodeDef.Body)
         {
             const size_t colliderCount = nodeDef.Body->Colliders.size();
-            MLG_CHECKV(colliderCount <= kMaxColliderCount, "Collider count out of range");
-            MLG_CHECKV(kMaxColliderCount - count >= colliderCount, "Collider count out of range");
-            count += nodeDef.Body->Colliders.size();
+            MLG_CHECKV(!safeint::AddWillOverflow(count, colliderCount, kMaxColliderCount),
+                "Collider count overflow");
+            count += colliderCount;
         }
     }
 
-    std::vector<ColliderResource> colliders;
     colliders.reserve(count);
 
     for(const RootNodeDef& nodeDef : nodeDefs)
@@ -756,19 +806,25 @@ CollectColliders(const std::span<const RootNodeDef> nodeDefs)
 Result<std::vector<RigidBodyResource>>
 CollectRigidBodies(const std::span<const RootNodeDef> nodeDefs)
 {
-    constexpr size_t kMaxRigidBodyCount = kMaxVectorSize<RigidBodyResource>;
+    std::vector<RigidBodyResource> rigidBodies;
+
+    static const size_t kMaxRigidBodyCount = std::min( //
+        {
+            static_cast<size_t>(kMaxVectorSize<RigidBodyResource>),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
 
     size_t count = 0;
     for(const RootNodeDef& nodeDef : nodeDefs)
     {
         if(nodeDef.Body)
         {
-            MLG_CHECKV(count < kMaxRigidBodyCount, "Rigid body count out of range");
+            MLG_CHECKV(!safeint::AddWillOverflow(count, 1uz, kMaxRigidBodyCount),
+                "Rigid body count overflow");
             ++count;
         }
     }
 
-    std::vector<RigidBodyResource> rigidBodies;
     rigidBodies.reserve(count);
 
     size_t colliderIndex = 0;
@@ -806,13 +862,18 @@ CollectRigidBodies(const std::span<const RootNodeDef> nodeDefs)
 
 Result<std::vector<SceneNodeResource>>
 CollectSceneNodes(const std::span<const FlatNodeDef> flatNodeDefs,
-    const std::map<std::string_view, StringResource>& stringIndexMap)
+    const StringLookup& stringIndexMap)
 {
-    constexpr size_t kMaxSceneNodeCount = kMaxVectorSize<SceneNodeResource>;
+    std::vector<SceneNodeResource> sceneNodes;
 
+    static const size_t kMaxSceneNodeCount = std::min( //
+        {
+            static_cast<size_t>(kMaxVectorSize<SceneNodeResource>),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
+    
     MLG_CHECKV(flatNodeDefs.size() <= kMaxSceneNodeCount, "Scene node count out of range");
 
-    std::vector<SceneNodeResource> sceneNodes;
     sceneNodes.reserve(flatNodeDefs.size());
 
     for(const FlatNodeDef& flatNodeDef : flatNodeDefs)
@@ -896,8 +957,7 @@ AppendSpan(const std::span<const T> span, std::vector<std::byte>& buffer)
 
     const std::span bytes = AsBytes(span);
 
-    MLG_CHECKV(buffer.size() <= header->TotalSize, "Buffer size exceeds bundle capacity");
-    MLG_CHECKV(header->TotalSize - buffer.size() >= bytes.size(),
+    MLG_CHECKV(!safeint::AddWillOverflow(buffer.size(), bytes.size(), static_cast<size_t>(header->TotalSize)),
         "Appending span exceeds bundle capacity");
 
     buffer.insert(buffer.end(), bytes.begin(), bytes.end());
