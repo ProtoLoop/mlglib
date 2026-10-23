@@ -1,12 +1,14 @@
 #include "Compressors.h"
 
+#include <astcenc.h>
 #include <bc7enc.h>
+#include <memory>
 
 namespace
 {
 // Encodes an image as BC7.
 Result<MipImage>
-EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
+EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath, const uint32_t mipLevel)
 {
     MLG_CHECK(srcMip.GetFormat() == TextureFormat::GetRGBA(), "Source mip must be in RGBA format");
 
@@ -15,7 +17,7 @@ EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
 
     const TextureFormat& bc7Format = TextureFormat::GetBC7();
 
-    MLG_INFO("Encoding {} -> BC7...", texturePath);
+    MLG_INFO("Encoding {} -> BC7 (mip {})...", texturePath, mipLevel);
 
     const uint32_t srcWidth = srcMip.GetWidth();
     const uint32_t srcHeight = srcMip.GetHeight();
@@ -111,17 +113,83 @@ EncodeBC7Mip(const MipImage& srcMip, const std::string_view texturePath)
     return MipImage::Create(srcWidth, srcHeight, bc7Format, std::move(outputBytes));
 }
 
+/// Deleter for astcenc_context to be used with smart pointers.
+struct AstcContextDeleter
+{
+    void operator()(astcenc_context* context) const noexcept { astcenc_context_free(context); }
+};
+
+Result<MipImage>
+EncodeASTCMip(const MipImage& srcMip,
+    astcenc_context& context,
+    const std::string_view texturePath,
+    const uint32_t mipLevel)
+{
+    MLG_CHECK(srcMip.GetFormat() == TextureFormat::GetRGBA(), "Source mip must be in RGBA format");
+
+    constexpr uint32_t kImageDepth = 1;
+    constexpr uint32_t kThreadIndex = 0;
+    constexpr astcenc_swizzle kSwizzle //
+        {
+            .r = ASTCENC_SWZ_R,
+            .g = ASTCENC_SWZ_G,
+            .b = ASTCENC_SWZ_B,
+            .a = ASTCENC_SWZ_A,
+        };
+    const TextureFormat& astcFormat = TextureFormat::GetASTC();
+
+    MLG_INFO("Encoding {} -> ASTC (mip {})...", texturePath, mipLevel);
+
+    std::vector<std::byte> outputBytes(
+        astcFormat.GetBlockAlignedSizeofData(srcMip.GetWidth(), srcMip.GetHeight()));
+
+    void* pixels = srcMip.GetBytes().data();
+    astcenc_image image // One slice for a 2D image.
+        {
+            .dim_x = srcMip.GetWidth(),
+            .dim_y = srcMip.GetHeight(),
+            .dim_z = kImageDepth,
+            .data_type = ASTCENC_TYPE_U8,
+            // Source pixels are passed as mutable because the API also does decompression.
+            // Compression does not modify them.
+            .data = &pixels,
+        };
+
+    void* output = outputBytes.data();
+    // The encoder repeats edge pixels for partial blocks.
+    const astcenc_error status = astcenc_compress_image(&context,
+        &image,
+        &kSwizzle,
+        static_cast<uint8_t*>(output),
+        outputBytes.size(),
+        kThreadIndex);
+
+    MLG_CHECK(status == ASTCENC_SUCCESS,
+        "ASTC encoding failed: {}",
+        astcenc_get_error_string(status));
+
+    return MipImage::Create(srcMip.GetWidth(),
+        srcMip.GetHeight(),
+        astcFormat,
+        std::move(outputBytes));
+}
+
 } // namespace
 
 Result<MipMapChain>
-EncodeBC7(MipImage&& baseMip, const std::string_view texturePath)
+EncodeBC7(const MipImage& baseMip, const std::string_view texturePath)
 {
-    MLG_CHECK(baseMip.GetFormat() == TextureFormat::GetRGBA(), "Only RGBA format is supported for BC7 encoding");
-    
+    MLG_CHECK(baseMip.GetFormat() == TextureFormat::GetRGBA(),
+        "Only RGBA format is supported for BC7 encoding");
+
     const TextureFormat& bc7Format = TextureFormat::GetBC7();
 
     // The base mip image must be block aligned for BC7 encoding
-    
+
+    const MipImage* srcMip = &baseMip;
+
+    std::optional<MipImage> resizedMip;
+
     const size_t blockAlignedWidth = bc7Format.GetBlockAlignedWidth(baseMip.GetWidth());
     const size_t blockAlignedHeight = bc7Format.GetBlockAlignedHeight(baseMip.GetHeight());
 
@@ -130,19 +198,119 @@ EncodeBC7(MipImage&& baseMip, const std::string_view texturePath)
         auto resizeResult = baseMip.Resize(static_cast<uint32_t>(blockAlignedWidth),
             static_cast<uint32_t>(blockAlignedHeight));
         MLG_CHECK(resizeResult, "Failed to resize base image to block aligned dimensions.");
-        baseMip = std::move(*resizeResult);
+        resizedMip = std::move(*resizeResult);
+        srcMip = &(*resizedMip);
     }
 
-    auto mipmapsResult = MipMapChain::Create(std::move(baseMip));
-    MLG_CHECK(mipmapsResult, "Failed to generate mipmaps for texture: {}", texturePath);
+    const uint32_t srcW = srcMip->GetWidth();
+    const uint32_t srcH = srcMip->GetHeight();
 
-    BoundedVector<MipImage> mipmaps(mipmapsResult->GetMipCount());
+    const size_t mipCount = TextureFormat::GetMaxMipCount(srcW, srcH);
 
-    for(const MipImage& mip : mipmapsResult->GetMipMaps())
+    BoundedVector<MipImage> mipmaps(mipCount);
+
+    // Encode the base image.
+    auto bc7Result = EncodeBC7Mip(*srcMip, texturePath, 0);
+    MLG_CHECK(bc7Result, "Failed to encode BC7 mip level for texture: {}", texturePath);
+    mipmaps.emplace_back(std::move(*bc7Result));
+
+    for(size_t i = 1; i < mipCount; ++i)
     {
-        auto bc7Result = EncodeBC7Mip(mip, texturePath);
+        const uint32_t mipW = std::max(srcW >> i, 1u);
+        const uint32_t mipH = std::max(srcH >> i, 1u);
+
+        auto resizeResult = srcMip->Resize(mipW, mipH);
+        MLG_CHECK(resizeResult, "Failed to generate mip level {}", i);
+
+        bc7Result = EncodeBC7Mip(*resizeResult, texturePath, static_cast<uint32_t>(i));
         MLG_CHECK(bc7Result, "Failed to encode BC7 mip level for texture: {}", texturePath);
         mipmaps.emplace_back(std::move(*bc7Result));
+
+        resizedMip = std::move(*resizeResult);
+        srcMip = &(*resizedMip);
+    }
+
+    return MipMapChain::Create(std::move(mipmaps));
+}
+
+Result<MipMapChain>
+EncodeASTC(const MipImage& baseMip, const std::string_view texturePath)
+{
+    MLG_CHECK(baseMip.GetFormat() == TextureFormat::GetRGBA(),
+        "Only RGBA format is supported for ASTC encoding");
+
+    const TextureFormat& astcFormat = TextureFormat::GetASTC();
+
+    // The base mip image must be block aligned for ASTC encoding
+
+    const MipImage* srcMip = &baseMip;
+
+    std::optional<MipImage> resizedMip;
+
+    const uint32_t blockAlignedWidth = astcFormat.GetBlockAlignedWidth(baseMip.GetWidth());
+    const uint32_t blockAlignedHeight = astcFormat.GetBlockAlignedHeight(baseMip.GetHeight());
+
+    if(baseMip.GetWidth() != blockAlignedWidth || baseMip.GetHeight() != blockAlignedHeight)
+    {
+        auto resizeResult = baseMip.Resize(blockAlignedWidth, blockAlignedHeight);
+        MLG_CHECK(resizeResult, "Failed to resize base image to block aligned dimensions");
+        resizedMip = std::move(*resizeResult);
+        srcMip = &(*resizedMip);
+    }
+
+    const float kQuality = ASTCENC_PRE_MEDIUM;
+    constexpr uint32_t kBlockDepth = 1;
+    constexpr uint32_t kThreadCount = 1;
+    constexpr uint32_t kFlags = 0;
+
+    astcenc_config config{};
+    astcenc_error status = astcenc_config_init(ASTCENC_PRF_LDR_SRGB,
+        astcFormat.GetBlockDimension(),
+        astcFormat.GetBlockDimension(),
+        kBlockDepth,
+        kQuality,
+        kFlags,
+        &config);
+
+    MLG_CHECK(status == ASTCENC_SUCCESS,
+        "Failed to configure ASTC encoder: {}",
+        astcenc_get_error_string(status));
+
+    astcenc_context* contextPtr = nullptr;
+    status = astcenc_context_alloc(&config, kThreadCount, &contextPtr, nullptr);
+    const std::unique_ptr<astcenc_context, AstcContextDeleter> context(contextPtr);
+
+    MLG_CHECK(status == ASTCENC_SUCCESS,
+        "Failed to create ASTC context: {}",
+        astcenc_get_error_string(status));
+
+    const uint32_t srcW = srcMip->GetWidth();
+    const uint32_t srcH = srcMip->GetHeight();
+
+    const size_t mipCount = TextureFormat::GetMaxMipCount(srcW, srcH);
+
+    BoundedVector<MipImage> mipmaps(mipCount);
+
+    // Encode the base image.
+    auto astcResult = EncodeASTCMip(*srcMip, *context, texturePath, 0);
+    MLG_CHECK(astcResult, "Failed to encode ASTC mip level for texture: {}", texturePath);
+    mipmaps.emplace_back(std::move(*astcResult));
+
+    // Single-threaded contexts can be reused without resetting between images.
+    for(size_t i = 1; i < mipCount; ++i)
+    {
+        const uint32_t mipW = std::max(srcW >> i, 1u);
+        const uint32_t mipH = std::max(srcH >> i, 1u);
+
+        auto resizeResult = srcMip->Resize(mipW, mipH);
+        MLG_CHECK(resizeResult, "Failed to generate mip level {}", i);
+
+        astcResult = EncodeASTCMip(*resizeResult, *context, texturePath, static_cast<uint32_t>(i));
+        MLG_CHECK(astcResult, "Failed to encode ASTC mip level for texture: {}", texturePath);
+        mipmaps.emplace_back(std::move(*astcResult));
+
+        resizedMip = std::move(*resizeResult);
+        srcMip = &(*resizedMip);
     }
 
     return MipMapChain::Create(std::move(mipmaps));

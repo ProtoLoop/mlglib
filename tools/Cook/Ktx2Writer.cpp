@@ -1,9 +1,9 @@
 #include "Ktx2Writer.h"
 
+#include "Ktx2.h"
 #include "MipMapChain.h"
 
 #include <algorithm>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -12,83 +12,12 @@
 #include <type_traits>
 #include <vector>
 
+static_assert(std::is_trivially_copyable_v<ktx2::FileHeader>);
+static_assert(std::is_standard_layout_v<ktx2::FileHeader>);
+static_assert(sizeof(ktx2::FileHeader) == 80); // NOLINT(readability-magic-numbers)
+
 namespace
 {
-constexpr size_t kSizeofIdentifier = 12;
-struct Identifier
-{
-    const uint8_t Bytes[kSizeofIdentifier]; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
-};
-constexpr Identifier kIdentifier //
-    { { 0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A } };
-constexpr size_t kFileHeaderByteCount = 80;
-constexpr size_t kGlobalDataOffsetFieldOffset = 64;
-constexpr size_t kLevelIndexEntryByteCount = 24;
-constexpr size_t kDescriptorByteCount = 44;
-constexpr uint32_t kDescriptorVersionAndSize = 0x00280002;
-constexpr uint32_t kBc7SrgbStraightAlphaBt709 = 0x00020186;
-constexpr uint32_t kBc7TexelBlockDimensions = 0x00000303;
-constexpr uint32_t kBc7SampleBitOffsetLengthChannel = 0x007F0000;
-constexpr uint32_t kUnormSampleUpper = 0xFFFFFFFF;
-
-// On-disk layouts written directly as bytes.
-struct FileHeader
-{
-    Identifier Identifier;
-    uint32_t VkFormat;
-    uint32_t TypeSize;
-    uint32_t PixelWidth;
-    uint32_t PixelHeight;
-    uint32_t PixelDepth;
-    uint32_t LayerCount;
-    uint32_t FaceCount;
-    uint32_t LevelCount;
-    uint32_t SupercompressionScheme;
-    uint32_t DescriptorOffset;
-    uint32_t DescriptorSize;
-    uint32_t KeyValueOffset;
-    uint32_t KeyValueSize;
-    // Supercompression global data.
-    uint64_t GlobalDataOffset;
-    uint64_t GlobalDataSize;
-};
-
-struct LevelIndexEntry
-{
-    uint64_t ByteOffset;
-    uint64_t ByteLength;
-    uint64_t UncompressedByteLength;
-};
-
-// Data format descriptor with one basic block and one sample, as used by BC7.
-struct DataFormatDescriptor
-{
-    uint32_t TotalSize;
-    uint32_t VendorAndDescriptorType;
-    uint32_t VersionAndBlockSize;
-    uint32_t ColorModelPrimariesTransferFlags;
-    uint32_t TexelBlockDimensions;
-    uint32_t BytesPlane0To3;
-    uint32_t BytesPlane4To7;
-    uint32_t SampleBitOffsetLengthChannel;
-    uint32_t SamplePosition;
-    uint32_t SampleLower;
-    uint32_t SampleUpper;
-};
-
-static_assert(std::endian::native == std::endian::little,
-    "KTX2 struct writes require a little-endian host");
-static_assert(std::is_trivially_copyable_v<FileHeader>);
-static_assert(std::is_trivially_copyable_v<LevelIndexEntry>);
-static_assert(std::is_trivially_copyable_v<DataFormatDescriptor>);
-static_assert(sizeof(FileHeader) == kFileHeaderByteCount);
-static_assert(offsetof(FileHeader, VkFormat) == sizeof(kIdentifier));
-static_assert(offsetof(FileHeader, GlobalDataOffset) == kGlobalDataOffsetFieldOffset);
-static_assert(sizeof(LevelIndexEntry) == kLevelIndexEntryByteCount);
-static_assert(sizeof(DataFormatDescriptor) == kDescriptorByteCount);
-
-constexpr uint32_t kVkFormatBc7Srgb = 146;
-
 Result<>
 WriteBytes(std::ofstream& stream, const std::span<const std::byte> bytes)
 {
@@ -107,7 +36,7 @@ WriteKtx2(const std::filesystem::path& path, const MipMapChain& chain)
     const TextureFormat format = chain.GetFormat();
     const uint32_t mipCount = chain.GetMipCount();
     const auto mips = chain.GetMipMaps();
-    MLG_CHECK(format.IsBC7(), "KTX2 writer requires BC7 data");
+    MLG_CHECK(format.IsBC7() || format.IsASTC(), "KTX2 writer requires BC7 or ASTC data");
     MLG_CHECK(format.CheckDimensions(chain.GetWidth(), chain.GetHeight(), mipCount));
     MLG_CHECK(mips.size() == mipCount, "KTX2 mip count does not match chain data");
 
@@ -121,16 +50,16 @@ WriteKtx2(const std::filesystem::path& path, const MipMapChain& chain)
             mip);
     }
 
-    const size_t descriptorOffset = sizeof(FileHeader) + (sizeof(LevelIndexEntry) * mipCount);
-    const size_t metadataSize = descriptorOffset + sizeof(DataFormatDescriptor);
-    constexpr size_t kBytesPerBlock = TextureFormat::GetBC7().GetBytesPerBlock();
+    const size_t descriptorOffset = sizeof(ktx2::FileHeader) + (sizeof(ktx2::LevelIndexEntry) * mipCount);
+    const size_t metadataSize = descriptorOffset + sizeof(ktx2::DataFormatDescriptor);
+    const size_t bytesPerBlock = format.GetBytesPerBlock();
     const size_t paddedMetadataSize =
-        (metadataSize + kBytesPerBlock - 1) / kBytesPerBlock * kBytesPerBlock;
+        (metadataSize + bytesPerBlock - 1) / bytesPerBlock * bytesPerBlock;
 
-    FileHeader fileHeader //
+    ktx2::FileHeader fileHeader //
         {
-            .Identifier = kIdentifier,
-            .VkFormat = kVkFormatBc7Srgb,
+            .Identifier = ktx2::kIdentifier,
+            .VkFormat = format.IsBC7() ? ktx2::kVkFormatBc7Srgb : ktx2::kVkFormatAstc4x4Srgb,
             .TypeSize = 1,
             .PixelWidth = chain.GetWidth(),
             .PixelHeight = chain.GetHeight(),
@@ -140,7 +69,7 @@ WriteKtx2(const std::filesystem::path& path, const MipMapChain& chain)
             .LevelCount = mipCount,
             .SupercompressionScheme = 0,
             .DescriptorOffset = static_cast<uint32_t>(descriptorOffset),
-            .DescriptorSize = sizeof(DataFormatDescriptor),
+            .DescriptorSize = sizeof(ktx2::DataFormatDescriptor),
             .KeyValueOffset = 0,
             .KeyValueSize = 0,
             .GlobalDataOffset = 0,
@@ -148,14 +77,14 @@ WriteKtx2(const std::filesystem::path& path, const MipMapChain& chain)
         };
 
     // The index starts with level zero, but the payload starts with the smallest mip.
-    std::vector<LevelIndexEntry> levels(mipCount);
+    std::vector<ktx2::LevelIndexEntry> levels(mipCount);
     uint64_t offset = paddedMetadataSize;
     for(size_t mip = mips.size(); mip > 0; --mip)
     {
         const size_t byteCount = mips[mip - 1].GetBytes().size();
         MLG_CHECK(byteCount <= std::numeric_limits<uint64_t>::max() - offset,
             "KTX2 file size overflow");
-        levels[mip - 1] = LevelIndexEntry //
+        levels[mip - 1] = ktx2::LevelIndexEntry //
             {
                 .ByteOffset = offset,
                 .ByteLength = byteCount,
@@ -164,21 +93,26 @@ WriteKtx2(const std::filesystem::path& path, const MipMapChain& chain)
         offset += byteCount;
     }
 
-    const DataFormatDescriptor descriptor //
+    const ktx2::DataFormatDescriptor descriptor //
         {
-            .TotalSize = sizeof(DataFormatDescriptor),
+            .TotalSize = sizeof(ktx2::DataFormatDescriptor),
             .VendorAndDescriptorType = 0,
-            .VersionAndBlockSize = kDescriptorVersionAndSize,
-            .ColorModelPrimariesTransferFlags = kBc7SrgbStraightAlphaBt709,
-            .TexelBlockDimensions = kBc7TexelBlockDimensions,
+            .VersionAndBlockSize = ktx2::kDescriptorVersionAndSize,
+            .ColorModelPrimariesTransferFlags =
+                format.IsBC7() ? ktx2::kBc7SrgbStraightAlphaBt709 : ktx2::kAstcSrgbStraightAlphaBt709,
+            .TexelBlockDimensions =
+                format.IsBC7() ? ktx2::kBc7TexelBlockDimensions : ktx2::kAstc4x4TexelBlockDimensions,
             .BytesPlane0To3 = static_cast<uint32_t>(format.GetBytesPerBlock()),
             .BytesPlane4To7 = 0,
-            .SampleBitOffsetLengthChannel = kBc7SampleBitOffsetLengthChannel,
+            .SampleBitOffsetLengthChannel =
+                format.IsBC7() ? ktx2::kBc7SampleBitOffsetLengthChannel : ktx2::kAstcSampleBitOffsetLengthChannel,
             .SamplePosition = 0,
             .SampleLower = 0,
-            .SampleUpper = kUnormSampleUpper,
+            .SampleUpper = ktx2::kUnormSampleUpper,
         };
-    const std::byte padding[kBytesPerBlock]{};
+    constexpr size_t kPaddingByteCount = std::max(
+        TextureFormat::GetBC7().GetBytesPerBlock(), TextureFormat::GetASTC().GetBytesPerBlock());
+    const std::byte padding[kPaddingByteCount]{};
 
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
     MLG_CHECK(stream.is_open(), "Failed to open KTX2 output: {}", path.string());
@@ -186,7 +120,7 @@ WriteKtx2(const std::filesystem::path& path, const MipMapChain& chain)
     MLG_CHECK(WriteBytes(stream, std::as_bytes(std::span(levels))));
     MLG_CHECK(WriteBytes(stream, std::as_bytes(std::span(&descriptor, 1))));
     MLG_CHECK(WriteBytes(stream, std::span(padding).first(paddedMetadataSize - metadataSize)));
-    // BC7 payload sizes are multiples of 16, so no padding is needed between levels.
+    // BC7 and ASTC payload sizes are multiples of 16, so no padding is needed between levels.
     for(size_t mip = mips.size(); mip > 0; --mip)
     {
         MLG_CHECK(WriteBytes(stream, mips[mip - 1].GetBytes()));

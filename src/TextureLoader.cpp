@@ -1,13 +1,12 @@
+#include <variant>
 #define MLG_LOGGER_NAME "TLOD"
-
-#include "TextureLoader.h"
 
 #include "Defer.h"
 #include "FileFetcher.h"
 #include "GpuHelper.h"
-#include "Ktx2.h"
 #include "ResourceBundle.h"
 #include "System.h"
+#include "TextureLoader.h"
 #include "ThreadPool.h"
 
 #include <atomic>
@@ -70,11 +69,23 @@ TextureLoader::LoadFromResource(const GpuHelper& gpuHelper,
 
     RelativeFilePath relPath = *relPathResult;
 
-    if((texRsrc.HasBC7Encoding())
+    if((texRsrc.HasASTCEncoding())
+        && gpuHelper.HasTextureFormat(TextureFormat::FormatIdentifier::ASTC))
+    {
+        const std::string_view astcExtension =
+            TextureFormat::GetASTC().GetExtension().AsStringView();
+        const InplaceString<> ktx2Extension =
+            InplaceString<>::Format("{}.{}", astcExtension, "ktx2");
+        const auto pathResult = relPath.ReplaceExtension(ktx2Extension);
+        MLG_CHECK(pathResult, "Failed to replace extension for {} with {}", relPath, ktx2Extension);
+        relPath = *pathResult;
+    }
+    else if((texRsrc.HasBC7Encoding())
         && gpuHelper.HasTextureFormat(TextureFormat::FormatIdentifier::BC7))
     {
         const std::string_view bc7Extension = TextureFormat::GetBC7().GetExtension().AsStringView();
-        const InplaceString<> ktx2Extension = InplaceString<>::Format("{}.{}", bc7Extension, "ktx2");
+        const InplaceString<> ktx2Extension =
+            InplaceString<>::Format("{}.{}", bc7Extension, "ktx2");
         const auto pathResult = relPath.ReplaceExtension(ktx2Extension);
         MLG_CHECK(pathResult, "Failed to replace extension for {} with {}", relPath, ktx2Extension);
         relPath = *pathResult;
@@ -130,8 +141,8 @@ TextureLoader::OnUpdate()
             break;
 
         case Stage::LoadFromFile:
-            MLG_DEBUG("Loading texture: {}...", m_Path->GetFilename());
-            if(auto fetchResult = m_FileFetcher->Fetch(*m_Path); !fetchResult)
+            MLG_DEBUG("Loading texture: {}...", m_Path.GetFilename());
+            if(auto fetchResult = m_FileFetcher->Fetch(m_Path); !fetchResult)
             {
                 m_Stage = Stage::Failed;
             }
@@ -152,18 +163,28 @@ TextureLoader::OnUpdate()
                     MLG_ERROR("Failed to take fetched data");
                     m_Stage = Stage::Failed;
                 }
+                else if(auto ktx2 = Ktx2Container::Create(std::move(*fetchedData)); ktx2)
+                {
+                    m_Container = std::move(*ktx2);
+                }
+                else if(auto stb = StbContainer::Create(std::move(*fetchedData)); stb)
+                {
+                    m_Container = std::move(*stb);
+                }
+
+                if(std::holds_alternative<std::monostate>(m_Container))
+                {
+                    MLG_ERROR("Unsupported texture format");
+                    m_Stage = Stage::Failed;
+                }
+                else if(!BeginDecode())
+                {
+                    MLG_ERROR("Failed to decode texture");
+                    m_Stage = Stage::Failed;
+                }
                 else
                 {
-                    m_FileBytes = std::move(*fetchedData);
-                    if(!BeginDecode())
-                    {
-                        MLG_ERROR("Failed to decode texture");
-                        m_Stage = Stage::Failed;
-                    }
-                    else
-                    {
-                        m_Stage = Stage::Decoding;
-                    }
+                    m_Stage = Stage::Decoding;
                 }
             }
             break;
@@ -202,9 +223,7 @@ TextureLoader::Commit()
     MLG_DEFER
     {
         m_StagingBuffer.reset();
-        m_Width = 0;
-        m_Height = 0;
-        m_MipCount = 1;
+        m_Container = std::monostate{};
     };
 
     MLG_CHECKV(m_StagingBuffer, "Invalid staging buffer");
@@ -233,204 +252,154 @@ TextureLoader::Commit()
 Result<>
 TextureLoader::BeginDecode()
 {
-    MLG_LOG_SCOPE(m_Path->GetFilename());
+    MLG_LOG_SCOPE(m_Path.GetFilename());
 
     MLG_DEBUG("Decoding texture...");
 
-    void (*decodeFunction)(void*) = nullptr;
+    uint32_t width = 0, height = 0, mipCount = 1;
+    std::optional<TextureFormat> format;
 
-    if(TextureHeader::IsMlgTexture(m_FileBytes))
-    {
-        const TextureHeader* header = TextureHeader::GetHeader(m_FileBytes);
-        MLG_CHECK(header, "Failed to get texture header");
-
-        MLG_CHECK(TextureHeader::ValidateFile(m_FileBytes));
-
-        MLG_CHECK(header, "Failed to get texture header");
-
-        MLG_DEBUG("Image info - {} x {} - {}",
-            header->Width,
-            header->Height,
-            header->FourCC.AsStringView());
-
-        m_Width = header->Width;
-        m_Height = header->Height;
-        m_MipCount = header->MipCount;
-        m_Format = TextureFormat::GetFormat(header->FourCC);
-
-        decodeFunction = DecodeMlg;
-    }
-    else if(Ktx2Header::IsKtx2(m_FileBytes))
-    {
-        const auto header = Ktx2Header::GetHeader(m_FileBytes);
-        MLG_CHECK(header, "Invalid or unsupported KTX2 texture");
-        m_Width = header->Width;
-        m_Height = header->Height;
-        m_MipCount = header->MipCount;
-        m_Format = header->Format;
-        decodeFunction = DecodeKtx2;
-    }
-    else
-    {
-        // stb takes image size as an int.  Make sure we don't overflow.
-        MLG_CHECKV(m_FileBytes.size() <= std::numeric_limits<int>::max(),
-            "Texture size exceeds maximum size for stb_image: {} > {}",
-            m_FileBytes.size(),
-            std::numeric_limits<int>::max());
-
-        int width = 0, height = 0, numChannels = 0;
-
-        const void* p = m_FileBytes.data();
-
-        if(!stbi_info_from_memory(static_cast<const stbi_uc*>(p),
-               static_cast<int>(m_FileBytes.size()),
-               &width,
-               &height,
-               &numChannels))
+    auto result = std::visit(
+        [&](auto&& container) -> Result<>
         {
-            MLG_ERROR("Error getting image info - {}", stbi_failure_reason());
-            return Result<>::Fail;
-        }
+            using T = std::decay_t<decltype(container)>;
+            
+            if constexpr(std::is_same_v<T, std::monostate>)
+            {
+                MLG_ERROR("Texture container is empty");
+                return Result<>::Fail;
+            }
+            else
+            {
+                width = container.GetWidth();
+                height = container.GetHeight();
+                mipCount = container.GetMipCount();
+                format = container.GetFormat();
+                return Result<>::Ok;
+            }
+        },
+        m_Container);
 
-        MLG_DEBUG("Image info - {} x {} x {}", width, height, numChannels);
+    MLG_CHECK(result);
 
-        m_Width = static_cast<uint32_t>(width);
-        m_Height = static_cast<uint32_t>(height);
-        m_MipCount = 1;
-        m_Format = TextureFormat::GetRGBA();
-
-        decodeFunction = DecodeStb;
-    }
-
-    auto texBufResult = m_GpuHelper->CreateTextureStagingBuffer(m_Width,
-        m_Height,
-        m_MipCount,
-        m_Format,
-        m_Path->GetFilename());
+    auto texBufResult = m_GpuHelper->CreateTextureStagingBuffer(width,
+        height,
+        mipCount,
+        *format,
+        m_Path.GetFilename());
 
     MLG_CHECK(texBufResult, "Failed to create texture staging buffer");
 
     m_StagingBuffer.emplace(std::move(*texBufResult));
 
-    MLG_CHECK(m_ThreadPool->Enqueue(decodeFunction, this), "Failed to enqueue texture decode task");
+    MLG_CHECK(m_ThreadPool->Enqueue(Decode, this), "Failed to enqueue texture decode task");
 
     return Result<>::Ok;
 }
 
 void
-TextureLoader::DecodeKtx2(void* userData)
+TextureLoader::Decode(void* userData)
 {
     TextureLoader* loader = static_cast<TextureLoader*>(userData);
-    loader->m_DecodeResult = loader->DecodeKtx2();
+
+    std::visit(
+        [&](auto&& container)
+        {
+            using T = std::decay_t<decltype(container)>;
+
+            if constexpr(std::is_same_v<T, std::monostate>)
+            {
+                MLG_ERROR("Texture container is empty");
+                loader->m_DecodeResult = Result<>::Fail;
+            }
+            else
+            {
+                loader->m_DecodeResult = loader->Decode(container);
+            }
+        },
+        loader->m_Container);
+
+    // Free resources.
+    loader->m_Container = std::monostate{};
+
     loader->m_DecodeCompletionFlag.store(true);
 }
 
 Result<>
-TextureLoader::DecodeKtx2()
+TextureLoader::Decode(const Ktx2Container& ktx2)
 {
-    MLG_LOG_SCOPE(m_Path->GetFilename());
+    MLG_LOG_SCOPE(m_Path.GetFilename());
 
-    MLG_DEFER
+    for(uint32_t mip = 0; mip < ktx2.GetMipCount(); ++mip)
     {
-        std::vector<std::byte>().swap(m_FileBytes);
-    };
-
-    for(uint32_t mip = 0; mip < m_MipCount; ++mip)
-    {
-        const auto bytes = Ktx2Header::GetMipBytes(m_FileBytes, mip);
+        const auto bytes = ktx2.GetMipBytes(mip);
         MLG_CHECK(bytes, "Failed to get KTX2 mip bytes");
         MLG_CHECK(m_StagingBuffer->StageMipBytes(mip, *bytes), "Failed to stage KTX2 mip");
     }
     return Result<>::Ok;
 }
 
-void
-TextureLoader::DecodeMlg(void* userData)
-{
-    TextureLoader* loader = static_cast<TextureLoader*>(userData);
-    loader->m_DecodeResult = loader->DecodeMlg();
-    loader->m_DecodeCompletionFlag.store(true);
-}
-
-void
-TextureLoader::DecodeStb(void* userData)
-{
-    TextureLoader* loader = static_cast<TextureLoader*>(userData);
-    loader->m_DecodeResult = loader->DecodeStb();
-    loader->m_DecodeCompletionFlag.store(true);
-}
-
 Result<>
-TextureLoader::DecodeMlg()
+TextureLoader::Decode(const StbContainer& stb)
 {
-    MLG_LOG_SCOPE(m_Path->GetFilename());
-
-    MLG_DEBUG("Decoding MLG texture...");
-
-    MLG_DEFER
-    {
-        // Free the buffer to reclaim memory.
-        std::vector<std::byte>().swap(m_FileBytes);
-    };
-
-    const TextureHeader* header = TextureHeader::GetHeader(m_FileBytes);
-    MLG_CHECK(header, "Failed to get texture header");
-
-    MLG_DEBUG("Image info - {} x {} - {}",
-        header->Width,
-        header->Height,
-        header->FourCC.AsStringView());
-
-    const Result<std::span<const std::byte>> pixelBytesResult =
-        TextureHeader::GetPixelBytes(m_FileBytes);
-    MLG_CHECK(pixelBytesResult, "Failed to get pixel bytes");
-
-    MLG_CHECK(m_StagingBuffer->StageBytes(*pixelBytesResult), "Failed to stage bytes");
-
-    return Result<>::Ok;
-}
-
-Result<>
-TextureLoader::DecodeStb()
-{
-    MLG_LOG_SCOPE(m_Path->GetFilename());
+    MLG_LOG_SCOPE(m_Path.GetFilename());
 
     MLG_DEBUG("Decoding stb texture...");
 
-    MLG_DEFER
-    {
-        // Free the buffer to reclaim memory.
-        std::vector<std::byte>().swap(m_FileBytes);
-    };
-
     int imgWidth = 0, imgHeight = 0, imgNumChannels = 0;
 
-    const void* p = m_FileBytes.data();
+    const void* p = stb.GetBytes().data();
     const stbi_uc* texBytes = static_cast<const stbi_uc*>(p);
 
-    void* imgData = stbi_load_from_memory(texBytes,
-        static_cast<int>(m_FileBytes.size()),
+    stbi_uc* imgData = stbi_load_from_memory(texBytes,
+        static_cast<int>(stb.GetBytes().size()),
         &imgWidth,
         &imgHeight,
         &imgNumChannels,
         TextureFormat::kDefaultChannelCount);
 
-    MLG_CHECK(imgData, "Failed to decode image - {}", stbi_failure_reason());
-
     MLG_DEFER
     {
         // Free the stb image buffer.
-        stbi_image_free(imgData);
+        if(imgData)
+        {
+            stbi_image_free(imgData);
+        }
     };
 
-    const size_t sizeofImgData = static_cast<size_t>(m_Width)
-        * static_cast<size_t>(m_Height)
+    MLG_CHECK(imgData, "Failed to decode image - {}", stbi_failure_reason());
+
+    const size_t sizeofImgData = static_cast<size_t>(stb.GetWidth())
+        * static_cast<size_t>(stb.GetHeight())
         * TextureFormat::kDefaultChannelCount;
 
-    const std::span<const std::byte> pixelBytes =
-        std::span<const std::byte>(static_cast<const std::byte*>(imgData), sizeofImgData);
+    const std::span<const std::byte> pixelBytes = std::as_bytes(std::span(imgData, sizeofImgData));
 
     MLG_CHECK(m_StagingBuffer->StageBytes(pixelBytes), "Failed to stage bytes");
 
     return Result<>::Ok;
+}
+
+/// TextureLoader::StbContainer
+
+Result<TextureLoader::StbContainer>
+TextureLoader::StbContainer::Create(std::vector<std::byte>&& buffer)
+{
+    // stb takes image size as an int.  Make sure we don't overflow.
+    MLG_CHECKV(buffer.size() <= std::numeric_limits<int>::max(),
+        "Texture size exceeds maximum size for stb_image: {} > {}",
+        buffer.size(),
+        std::numeric_limits<int>::max());
+
+    int width = 0, height = 0, numChannels = 0;
+    const void* p = buffer.data();
+    MLG_CHECK(stbi_info_from_memory(static_cast<const stbi_uc*>(p),
+                  static_cast<int>(buffer.size()),
+                  &width,
+                  &height,
+                  &numChannels),
+        "Error getting image info - {}",
+        stbi_failure_reason());
+
+    return StbContainer(width, height, std::move(buffer));
 }

@@ -1,112 +1,191 @@
 #include "TextureFormat.h"
 
-/// TextureHeader
-
-bool
-TextureHeader::CheckMagic(const std::span<const std::byte> buffer)
+size_t
+TextureFormat::GetBlocksPerRow(const uint32_t imageWidth) const
 {
-    if(buffer.size() < sizeof(TextureHeader))
-    {
-        return false;
-    }
+    MLG_ABORTIF(IsUnknown(), "Texture format is unknown");
+    MLG_ABORTIF(m_BlockDimension == 0, "Block dimension is zero");
+    MLG_ABORTIF(std::numeric_limits<size_t>::max() - m_BlockDimension + 1 < imageWidth,
+        "Image width too large: {}",
+        imageWidth);
 
-    const void* p = buffer.data();
-    const TextureHeader* header = static_cast<const TextureHeader*>(p);
-    return header->Magic0 == TextureHeader::kMagic0 && header->Magic1 == TextureHeader::kMagic1;
+    // Round up to the next full block
+    return (imageWidth + m_BlockDimension - 1) / m_BlockDimension;
 }
 
-/// Checks if the buffer contains the correct version for a texture header.
-bool
-TextureHeader::CheckVersion(const std::span<const std::byte> buffer)
+size_t
+TextureFormat::GetBlockRowCount(const uint32_t imageHeight) const
 {
-    if(buffer.size() < sizeof(TextureHeader))
-    {
-        return false;
-    }
+    MLG_ABORTIF(IsUnknown(), "Texture format is unknown");
+    MLG_ABORTIF(m_BlockDimension == 0, "Block dimension is zero");
+    MLG_ABORTIF(std::numeric_limits<size_t>::max() - m_BlockDimension + 1 < imageHeight,
+        "Image height too large: {}",
+        imageHeight);
 
-    const void* p = buffer.data();
-    const TextureHeader* header = static_cast<const TextureHeader*>(p);
-    return header->Version == TextureHeader::kVersion;
+    // Round up to the next full block
+    return (imageHeight + m_BlockDimension - 1) / m_BlockDimension;
 }
 
-bool
-TextureHeader::IsMlgTexture(const std::span<const std::byte> buffer)
+uint32_t
+TextureFormat::GetBlockAlignedWidth(const uint32_t imageWidth) const noexcept
 {
-    return buffer.size() >= sizeof(TextureHeader) && CheckMagic(buffer) && CheckVersion(buffer);
+    return static_cast<uint32_t>(GetBlocksPerRow(imageWidth) * m_BlockDimension);
 }
 
-const TextureHeader*
-TextureHeader::GetHeader(const std::span<const std::byte> buffer)
+uint32_t
+TextureFormat::GetBlockAlignedHeight(const uint32_t imageHeight) const noexcept
 {
-    if(!CheckMagic(buffer))
-    {
-        MLG_WARN("Invalid texture header: Magic numbers do not match");
-        return nullptr;
-    }
-
-    if(!CheckVersion(buffer))
-    {
-        MLG_WARN("Invalid texture header: Version does not match");
-        return nullptr;
-    }
-
-    const void* p = buffer.data();
-    const TextureHeader* header = static_cast<const TextureHeader*>(p);
-
-    const TextureFormat& format = TextureFormat::GetFormat(header->FourCC);
-    if(format.IsUnknown())
-    {
-        MLG_WARN("Unknown texture format: {}", header->FourCC.AsStringView());
-        return nullptr;
-    }
-
-    if(!format.CheckDimensions(header->Width, header->Height, header->MipCount))
-    {
-        return nullptr;
-    }
-
-    return header;
+    return static_cast<uint32_t>(GetBlockRowCount(imageHeight) * m_BlockDimension);
 }
 
-Result<std::span<const std::byte>>
-TextureHeader::GetPixelBytes(const std::span<const std::byte> buffer)
+size_t
+TextureFormat::GetBlockAlignedBytesPerRow(const uint32_t imageWidth) const
 {
-    const TextureHeader* header = GetHeader(buffer);
-    MLG_CHECK(header, "Invalid texture header");
+    // Round up to the next full block
+    const size_t blocksPerRow = GetBlocksPerRow(imageWidth);
 
-    const size_t headerSize = sizeof(TextureHeader);
-    MLG_CHECK(buffer.size() > headerSize, "Buffer size is smaller than header size");
+    MLG_ABORTIF(std::numeric_limits<size_t>::max() / m_BlockDimension <= blocksPerRow,
+        "Row width too large: {}",
+        imageWidth);
 
-    const std::span pixelBytes = buffer.subspan(headerSize);
+    return blocksPerRow * m_BytesPerBlock;
+}
 
-    const TextureFormat& format = TextureFormat::GetFormat(header->FourCC);
-    MLG_CHECK(!format.IsUnknown(), "Unknown texture format: {}", header->FourCC.AsStringView());
+size_t
+TextureFormat::GetBlockAlignedBytesPerRowWithPadding(const uint32_t imageWidth,
+    const uint32_t rowStrideAlignment) const
+{
+    MLG_ABORTIF(rowStrideAlignment == 0, "Alignment must be non-zero");
 
-    MLG_CHECK(pixelBytes.size()
-            >= format.GetTotalSizeofMipData(header->Width, header->Height, header->MipCount),
-        "Pixel bytes span is smaller than expected");
+    const size_t bytesPerRow = GetBlockAlignedBytesPerRow(imageWidth);
 
-    return pixelBytes;
+    MLG_ABORTIF(std::numeric_limits<size_t>::max() - rowStrideAlignment + 1 < bytesPerRow,
+        "Alignment too large for the given row size: {} > {}",
+        rowStrideAlignment,
+        bytesPerRow);
+
+    const size_t alignmentsPerRow = (bytesPerRow + rowStrideAlignment - 1) / rowStrideAlignment;
+
+    MLG_ABORTIF(std::numeric_limits<size_t>::max() / rowStrideAlignment < alignmentsPerRow,
+        "Aligned row width too large: {}",
+        bytesPerRow);
+
+    return alignmentsPerRow * rowStrideAlignment;
+}
+
+size_t
+TextureFormat::GetBlockAlignedSizeofData(const uint32_t imageWidth,
+    const uint32_t imageHeight) const
+{
+    const size_t bytesPerRow = GetBlockAlignedBytesPerRow(imageWidth);
+    const size_t rowCount = GetBlockRowCount(imageHeight);
+    MLG_ABORTIF(bytesPerRow > 0 && std::numeric_limits<size_t>::max() / bytesPerRow < rowCount,
+        "Texture size too large: {} x {}",
+        imageWidth,
+        imageHeight);
+
+    return bytesPerRow * rowCount;
+}
+
+size_t
+TextureFormat::GetBlockAlignedSizeofDataWithPadding(
+    const uint32_t imageWidth, const uint32_t imageHeight, const uint32_t rowStrideAlignment) const
+{
+    const size_t bytesPerRow =
+        GetBlockAlignedBytesPerRowWithPadding(imageWidth, rowStrideAlignment);
+    const size_t rowCount = GetBlockRowCount(imageHeight);
+
+    MLG_ABORTIF(bytesPerRow > 0 && std::numeric_limits<size_t>::max() / bytesPerRow < rowCount,
+        "Texture size too large: {} x {}",
+        imageWidth,
+        imageHeight);
+
+    return rowCount * bytesPerRow;
+}
+
+size_t
+TextureFormat::GetTotalSizeofMipData(
+    const uint32_t imageWidth, const uint32_t imageHeight, const uint32_t mipCount) const
+{
+    const size_t kMaxSize = std::vector<std::byte>().max_size();
+
+    size_t sizeofData = 0;
+
+    for(uint32_t mip = 0; mip < mipCount; ++mip)
+    {
+        const uint32_t mipWidth = std::max(imageWidth >> mip, 1u);
+        const uint32_t mipHeight = std::max(imageHeight >> mip, 1u);
+        const size_t sizeOfMip = GetBlockAlignedSizeofData(mipWidth, mipHeight);
+
+        MLG_ABORTIF(kMaxSize - sizeofData < sizeOfMip,
+            "Texture size too large for mip level {}: {} + {} > {}",
+            mip,
+            sizeofData,
+            sizeOfMip,
+            kMaxSize);
+
+        sizeofData += sizeOfMip;
+    }
+
+    return sizeofData;
+}
+
+size_t
+TextureFormat::GetTotalSizeofMipDataWithPadding(const uint32_t imageWidth,
+    const uint32_t imageHeight,
+    const uint32_t mipCount,
+    const uint32_t alignment) const
+{
+    const size_t kMaxSize = std::vector<std::byte>().max_size();
+
+    size_t sizeofData = 0;
+
+    for(uint32_t mip = 0; mip < mipCount; ++mip)
+    {
+        const uint32_t mipWidth = std::max(imageWidth >> mip, 1u);
+        const uint32_t mipHeight = std::max(imageHeight >> mip, 1u);
+        const size_t sizeOfMip =
+            GetBlockAlignedSizeofDataWithPadding(mipWidth, mipHeight, alignment);
+
+        MLG_ABORTIF(kMaxSize - sizeofData < sizeOfMip,
+            "Texture size too large for mip level {}: {} + {} > {}",
+            mip,
+            sizeofData,
+            sizeOfMip,
+            kMaxSize);
+
+        sizeofData += sizeOfMip;
+    }
+
+    return sizeofData;
+}
+
+uint32_t
+TextureFormat::GetMaxMipCount(const uint32_t width, const uint32_t height)
+{
+    uint32_t mipCount = 1;
+    while(width >= (1u << mipCount) || height >= (1u << mipCount))
+    {
+        ++mipCount;
+    }
+    return mipCount;
 }
 
 Result<>
-TextureHeader::ValidateFile(const std::span<const std::byte> fileBuffer)
+TextureFormat::CheckDimensions(const uint32_t width, const uint32_t height, const uint32_t mipCount)
 {
-    const TextureHeader* header = GetHeader(fileBuffer);
-    MLG_CHECK(header, "Invalid texture header");
+    MLG_CHECK(width > 0 && height > 0, "Image width and height must be greater than zero");
+    MLG_CHECK(width <= kMaxWidth && height <= kMaxHeight,
+        "Image dimensions exceed maximum allowed size: {}x{}",
+        width,
+        height);
 
-    const TextureFormat& format = TextureFormat::GetFormat(header->FourCC);
-    MLG_CHECK(!format.IsUnknown(), "Unknown texture format: {}", header->FourCC.AsStringView());
-
-    const size_t expectedSize =
-        format.GetTotalSizeofMipData(header->Width, header->Height, header->MipCount);
-
-    const size_t actualSize = fileBuffer.size() - sizeof(TextureHeader);
-
-    MLG_CHECK(actualSize == expectedSize,
-        "File buffer size does not match expected size: {} != {}",
-        actualSize,
-        expectedSize);
+    MLG_CHECK(mipCount > 0, "Mip count must be greater than zero");
+    const uint32_t expectedMipCount = GetMaxMipCount(width, height);
+    MLG_CHECK(mipCount <= expectedMipCount,
+        "Mip count exceeds maximum allowed for the given dimensions: {} > {}",
+        mipCount,
+        expectedMipCount);
 
     return Result<>::Ok;
 }

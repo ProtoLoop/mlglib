@@ -300,6 +300,12 @@ target_compile_definitions(imgui PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
 # --- box3d
 add_subdirectory(thirdparty/box3d EXCLUDE_FROM_ALL SYSTEM)
 
+# --- astc-encoder
+set(ASTCENC_CLI OFF CACHE BOOL "Build astcenc command line tools" FORCE)
+set(ASTCENC_UNIVERSAL_BUILD OFF CACHE BOOL "Build universal astcenc binaries" FORCE)
+set(ASTCENC_ISA_NATIVE ON CACHE BOOL "Build astcenc for the compiler target" FORCE)
+add_subdirectory(thirdparty/astc-encoder EXCLUDE_FROM_ALL SYSTEM)
+
 # --- bc7enc_rdo
 add_library(bc7enc_rdo STATIC EXCLUDE_FROM_ALL
   thirdparty/bc7enc_rdo/bc7enc.cpp
@@ -438,6 +444,7 @@ set(SSG_HEADERS
   src/PerfMetrics.h
   src/ResourceBundle.h
   src/Result.h
+  src/SafeInteger.h
   src/Scene.h
   src/SceneTypes.h
   src/SemanticIdentifier.h
@@ -530,7 +537,7 @@ endfunction()
 # ============================================================
 add_tool_executable(Cook tools/Cook/Cook.cpp)
 target_sources(Cook PRIVATE tools/Cook/Ktx2Writer.cpp tools/Cook/MipMapChain.cpp tools/Cook/Compressors.cpp)
-target_link_libraries(Cook PRIVATE bc7enc_rdo)
+target_link_libraries(Cook PRIVATE bc7enc_rdo astcenc-native-static)
 target_include_directories(Cook SYSTEM PRIVATE thirdparty/stb)
 
 # ============================================================

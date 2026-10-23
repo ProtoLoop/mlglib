@@ -21,7 +21,7 @@ ExpectInplaceString(const InplaceString<N>& value, const std::string_view expect
     EXPECT_EQ(std::string_view(value.data(), value.size()), expected);
     EXPECT_EQ(value.data(), value.c_str());
     EXPECT_EQ(std::string_view(value.c_str(), value.size() + 1).back(), '\0');
-    EXPECT_EQ(value.GetHashCode(), std::hash<std::string_view>{}(expected));
+    EXPECT_EQ(value.GetHashCode(), InplaceString<N>::Hash(expected));
     EXPECT_EQ(std::hash<InplaceString<N>>{}(value), value.GetHashCode());
 }
 } // namespace

@@ -28,15 +28,28 @@
 #include <string_view>
 #include <sys/types.h>
 #include <system_error>
-#include <type_traits>
 #include <vector>
 
 namespace
 {
-// static_assert(std::is_trivially_copyable_v<TextureHeader>);
-static_assert(std::is_standard_layout_v<TextureHeader>);
-static_assert(sizeof(TextureHeader) == 28); // NOLINT(readability-magic-numbers)
+/// Valid by construction
+class Motor
+{
+public:
+    Motor() = delete; // Can't be default-constructed - requires params.
+    ~Motor();
+    Motor(const Motor&) = delete; // Can't be copied - can't have two controllers for the same motor.
+    Motor& operator=(const Motor&) = delete;
+    Motor(Motor&&) = delete; // Can't be moved - violates valid by construction
+    Motor& operator=(Motor&&) = delete;
 
+    /// Use a Create() method so we can return an error - no exceptions
+    static Result<std::unique_ptr<Motor>> Create(const int motorId) noexcept;
+
+private:
+
+    explicit Motor(const int motorId) noexcept;
+};
 /// Command line arguments for the cook tool.
 struct CmdLineArgs
 {
@@ -91,6 +104,7 @@ ParseArgs(int argc, char** argv)
 }
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 
+/// Creates a CookDirs instance from command line arguments.
 Result<CookDirs>
 CookDirs::FromArgs(const CmdLineArgs& args)
 {
@@ -138,6 +152,7 @@ CookDirs::FromArgs(const CmdLineArgs& args)
 
 using ByteSpan = std::span<const std::byte>;
 
+/// Writes the byte spans in order to a file at the specified path.
 Result<>
 WriteFile(const std::filesystem::path& path, std::span<ByteSpan> byteSpans)
 {
@@ -162,38 +177,39 @@ WriteFile(const std::filesystem::path& path, std::span<ByteSpan> byteSpans)
     return Result<>::Ok;
 }
 
+/// Loads a raw texture from the input directory specified in CookDirs.
 Result<MipImage>
-LoadRawTexture(const CookDirs& cookDirs, const std::string_view texturePath)
+LoadRawTexture(const CookDirs& cookDirs, const std::string_view path)
 {
-    MLG_INFO("Loading image: {}...", texturePath);
+    MLG_INFO("Loading image: {}...", path);
 
-    const std::filesystem::path textureFullPath = (cookDirs.InputDir / texturePath);
-    std::ifstream stream(textureFullPath, std::ios::binary);
+    const std::filesystem::path fullPath = (cookDirs.InputDir / path);
+    std::ifstream stream(fullPath, std::ios::binary);
     MLG_CHECKV(stream.is_open(),
         "Failed to open image file for reading: {}",
-        textureFullPath.string());
+        fullPath.string());
 
     std::error_code ec;
-    const uintmax_t fileSize = std::filesystem::file_size(textureFullPath, ec);
+    const uintmax_t fileSize = std::filesystem::file_size(fullPath, ec);
     MLG_CHECKV(!ec, "Failed to get image file size: {}", ec.message());
 
-    MLG_CHECKV(fileSize > 0, "Image file is empty: {}", textureFullPath.string());
+    MLG_CHECKV(fileSize > 0, "Image file is empty: {}", fullPath.string());
 
     // Make sure the file size fits within an int for stb_image.
     MLG_CHECKV(fileSize <= static_cast<uintmax_t>(std::numeric_limits<int>::max()),
         "Image file too large: {}",
-        textureFullPath.string());
+        fullPath.string());
 
     std::vector<char> fileData;
 
     MLG_CHECKV(fileSize <= fileData.max_size(),
         "Image file too large: {}",
-        textureFullPath.string());
+        fullPath.string());
 
     fileData.resize(static_cast<size_t>(fileSize));
 
     stream.read(fileData.data(), static_cast<std::streamsize>(fileData.size()));
-    MLG_CHECKV(stream.good(), "Failed to read image file: {}", textureFullPath.string());
+    MLG_CHECKV(stream.good(), "Failed to read image file: {}", fullPath.string());
 
     stream.close();
 
@@ -224,12 +240,12 @@ LoadRawTexture(const CookDirs& cookDirs, const std::string_view texturePath)
     return MipImage::Create(uImgWidth, uImgHeight, TextureFormat::GetRGBA(), std::move(stbData));
 }
 
+/// Copies an image from the input directory to the output directory.
 Result<>
-WriteTexture(
-    const CookDirs& cookDirs, const std::string_view texturePath, const MipMapChain& mipmapChain)
+CopyImage(const CookDirs& cookDirs, const std::string_view path)
 {
-    const std::filesystem::path srcPath = (cookDirs.InputDir / texturePath);
-    const std::filesystem::path dstPath = (cookDirs.OutputDir / texturePath);
+    const std::filesystem::path srcPath = (cookDirs.InputDir / path);
+    const std::filesystem::path dstPath = (cookDirs.OutputDir / path);
 
     // Ensure the output directory exists before writing the texture.
     std::error_code ec;
@@ -247,31 +263,25 @@ WriteTexture(
         dstPath.string(),
         ec.message());
 
-    const TextureHeader header(mipmapChain.GetWidth(),
-        mipmapChain.GetHeight(),
-        mipmapChain.GetMipCount(),
-        mipmapChain.GetFormat().GetHeaderFourcc());
+    return Result<>::Ok;
+}
 
-    std::vector<ByteSpan> byteSpans;
-    byteSpans.reserve(1 + mipmapChain.GetMipMaps().size());
+/// Writes a mipmapped texture to the output directory in KTX2 format.
+Result<>
+WriteTexture(
+    const CookDirs& cookDirs, const std::string_view path, const MipMapChain& mipmapChain)
+{
+    const std::filesystem::path srcPath = (cookDirs.InputDir / path);
+    const std::filesystem::path dstPath = (cookDirs.OutputDir / path);
 
-    const std::span<const std::byte> headerSpan = std::as_bytes(std::span(&header, 1));
+    // Ensure the output directory exists before writing the texture.
+    std::error_code ec;
+    std::filesystem::create_directories(dstPath.parent_path(), ec);
+    MLG_CHECKV(!ec, "Failed to create output directory: {}", ec.message());
 
-    byteSpans.emplace_back(headerSpan);
-
-    for(const MipImage& mip : mipmapChain.GetMipMaps())
-    {
-        const std::span<const std::byte> mipBytes = mip.GetBytes();
-        byteSpans.emplace_back(mipBytes);
-    }
+    MLG_INFO("Writing: {} -> {}...", srcPath.string(), dstPath.string());
 
     std::filesystem::path curDstPath = dstPath;
-
-    curDstPath.replace_extension(mipmapChain.GetFormat().GetExtension().AsStringView());
-
-    MLG_INFO("Writing: {} -> {}...", srcPath.string(), curDstPath.string());
-
-    MLG_CHECK(WriteFile(curDstPath, byteSpans));
 
     const std::string extension =
         std::format("{}.ktx2", mipmapChain.GetFormat().GetExtension().AsStringView());
@@ -294,16 +304,24 @@ CookTexture(CookTextureWorkerParams& params)
     auto rawImageResult = LoadRawTexture(params.CookDirs, params.TexturePath);
     MLG_CHECK(rawImageResult);
 
-    auto bc7Result = EncodeBC7(std::move(*rawImageResult), params.TexturePath);
+    auto bc7Result = EncodeBC7(*rawImageResult, params.TexturePath);
     MLG_CHECK(bc7Result, "Failed to encode BC7 texture: {}", params.TexturePath);
 
+    auto astcResult = EncodeASTC(*rawImageResult, params.TexturePath);
+    MLG_CHECK(astcResult, "Failed to encode ASTC texture: {}", params.TexturePath);
+
+    MLG_CHECK(CopyImage(params.CookDirs, params.TexturePath));
+
     MLG_CHECK(WriteTexture(params.CookDirs, params.TexturePath, *bc7Result));
+
+    MLG_CHECK(WriteTexture(params.CookDirs, params.TexturePath, *astcResult));
 
     MLG_INFO("Cooked texture: {} in {} ms", params.TexturePath, timer.GetElapsedSeconds());
 
     return Result<>::Ok;
 }
 
+/// Worker function for cooking a texture in a background thread.
 void
 CookTextureWorker(void* arg)
 {
@@ -372,6 +390,7 @@ Cook(const CmdLineArgs& args, ThreadPool& threadPool)
     std::vector<CookTextureWorkerParams> cookTextureParams;
     cookTextureParams.reserve(texturePaths.size());
 
+    // Initialize a latch to wait for texture cooking tasks to complete.
     std::latch cookTextureLatch(static_cast<int>(texturePaths.size()));
 
     MLG_DEFER
@@ -404,6 +423,7 @@ Cook(const CmdLineArgs& args, ThreadPool& threadPool)
         }
     }
 
+    // Wait for completion
     cookTextureLatch.wait();
 
     Result<> cookTexResult = Result<>::Ok;
@@ -413,6 +433,7 @@ Cook(const CmdLineArgs& args, ThreadPool& threadPool)
         if(!params.Result)
         {
             cookTexResult = params.Result;
+            break;
         }
     }
 

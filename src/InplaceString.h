@@ -34,10 +34,10 @@ public:
     static constexpr size_t kMaxLength = N;
 
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    InplaceString()
+    constexpr InplaceString()
     {
         m_Chars[0] = '\0';
-        m_Hash = ComputeHash(*this); // NOLINT(cppcoreguidelines-prefer-member-initializer)
+        m_Hash = Hash(*this); // NOLINT(cppcoreguidelines-prefer-member-initializer)
     }
 
     template<size_t M>
@@ -52,11 +52,27 @@ public:
         }
         m_Chars[m_Length] = '\0';
 
-        m_Hash = ComputeHash(*this);
+        m_Hash = Hash(*this);
+    }
+
+    template<size_t M>
+        requires(M <= N)
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    constexpr explicit InplaceString(const char (&value)[M])
+        : m_Chars{}
+    {
+        for(size_t i = 0; i < M && '\0' != value[i]; ++i)
+        {
+            m_Chars[i] = value[i];
+            ++m_Length;
+        }
+        m_Chars[m_Length] = '\0';
+
+        m_Hash = Hash(*this);
     }
 
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    explicit InplaceString(const std::string_view str)
+    constexpr explicit InplaceString(const std::string_view str)
         : m_Length((str.size() <= kMaxLength) ? str.size() : kMaxLength)
     {
         MLG_ASSERT(str.size() <= kMaxLength);
@@ -67,7 +83,7 @@ public:
         }
         m_Chars[m_Length] = '\0';
 
-        m_Hash = ComputeHash(*this);
+        m_Hash = Hash(*this);
     }
 
     InplaceString& operator=(const std::string_view str)
@@ -82,20 +98,20 @@ public:
         }
         m_Chars[m_Length] = '\0';
 
-        m_Hash = ComputeHash(*this);
+        m_Hash = Hash(*this);
 
         return *this;
     }
 
-    size_t size() const { return m_Length; }
+    constexpr size_t size() const { return m_Length; }
 
-    bool empty() const { return m_Length == 0; }
+    constexpr bool empty() const { return m_Length == 0; }
 
-    const char* c_str() const { return &m_Chars[0]; }
+    constexpr const char* c_str() const { return &m_Chars[0]; }
 
-    const char* data() const { return &m_Chars[0]; }
+    constexpr const char* data() const { return &m_Chars[0]; }
 
-    size_t GetHashCode() const { return m_Hash; }
+    constexpr size_t GetHashCode() const { return m_Hash; }
 
     /// Formats a message into an InplaceString.
     /// If the formatted message exceeds the buffer size, it will be truncated and an
@@ -117,13 +133,13 @@ public:
         const size_t formattedSize = std::min(result.size, kMaxLength);
         fs.m_Length = formattedSize;
         fs.m_Chars[formattedSize] = '\0';
-        fs.m_Hash = ComputeHash(fs);
+        fs.m_Hash = Hash(fs);
 
         return fs;
     }
 
     // NOLINTNEXTLINE(google-explicit-constructor)
-    operator std::string_view() const { return std::string_view(&m_Chars[0], m_Length); }
+    constexpr operator std::string_view() const { return std::string_view(&m_Chars[0], m_Length); }
 
     friend auto operator<=>(const InplaceString& a, const InplaceString& b)
     {
@@ -141,12 +157,22 @@ public:
     }
 
     friend bool operator!=(const InplaceString& a, const InplaceString& b) { return !(a == b); }
+    
+    static constexpr size_t Hash(const std::string_view str) noexcept
+    {
+        constexpr uint64_t kOffsetBasis = 0xCBF29CE484222325;
+        constexpr uint64_t kPrime = 0x100000001B3;
+
+        uint64_t hash = kOffsetBasis;
+        for(const char ch : str)
+        {
+            hash ^= static_cast<unsigned char>(ch);
+            hash *= kPrime;
+        }
+        return static_cast<size_t>(hash);
+    }
 
 private:
-    static size_t ComputeHash(const std::string_view str)
-    {
-        return std::hash<std::string_view>{}(str);
-    }
 
     char m_Chars[kStorageSize];
     size_t m_Length{ 0 };

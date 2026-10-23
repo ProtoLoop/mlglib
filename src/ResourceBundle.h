@@ -407,7 +407,8 @@ enum TextureResourceEncoding : uint32_t // NOLINT(cppcoreguidelines-use-enum-cla
 {
     None = 0x00, // No encoding variants available
     BC7 = 0x01,  // Block Compression encoding variant
-    All = 0x01,  // All encoding variants available
+    ASTC = 0x02, // Adaptive Scalable Texture Compression encoding variant
+    All = 0x03,  // All encoding variants available
 };
 #define TEXTURE_RESOURCE_FIELDS(X)                                                                 \
     X(StringResource, TexturePath)                                                                 \
@@ -418,6 +419,8 @@ struct TextureResource final
     TEXTURE_RESOURCE_FIELDS(MLG_DECLARE_FIELD)
 
     bool HasBC7Encoding() const { return (Encodings & TextureResourceEncoding::BC7) != 0; }
+
+    bool HasASTCEncoding() const { return (Encodings & TextureResourceEncoding::ASTC) != 0; }
 };
 static_assert(BinaryStruct<TextureResource>);
 MLG_ASSERT_FIELD_COUNT(TEXTURE_RESOURCE_FIELDS, 2);

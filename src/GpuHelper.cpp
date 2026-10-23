@@ -33,7 +33,6 @@ constexpr std::pair<wgpu::FeatureName, const char*> kRequiredFeatures[] = //
 constexpr std::pair<wgpu::FeatureName, const char*> kDesiredFeatures[] = //
     {
         { wgpu::FeatureName::TextureCompressionBC, "TextureCompressionBC" },
-        { wgpu::FeatureName::TextureCompressionETC2, "TextureCompressionETC2" },
         { wgpu::FeatureName::TextureCompressionASTC, "TextureCompressionASTC" },
     };
 
@@ -921,10 +920,8 @@ GpuHelper::HasTextureFormat(TextureFormat::FormatIdentifier formatId) const
             return true;
         case TextureFormat::FormatIdentifier::BC7:
             return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionBC);
-        /*case TextureFormat::FormatId::ETC2:
-            return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionETC2);
-        case TextureFormat::FormatId::ASTC:
-            return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionASTC);*/
+        case TextureFormat::FormatIdentifier::ASTC:
+            return m_Device.HasFeature(wgpu::FeatureName::TextureCompressionASTC);
         case TextureFormat::FormatIdentifier::Unknown:
             return false;
     }
