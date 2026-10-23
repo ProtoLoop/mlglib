@@ -1,5 +1,7 @@
 #include "Compressors.h"
 
+#include "zstd.h"
+
 #include <astcenc.h>
 #include <bc7enc.h>
 #include <memory>

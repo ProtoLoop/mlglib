@@ -106,6 +106,14 @@ Documentation synchronization does not expand approval. If an approved code
 change reveals that additional documentation must change, identify it and
 request expanded approval before editing it.
 
+When adding, removing, upgrading, or changing how a third-party dependency is
+incorporated into distributed applications, review `ThirdPartyLicenses.txt`.
+Include affected transitive dependencies and bundled code. Keep notices
+independent of any particular build or platform, and exclude dependencies used
+only by development tools or source-only components. If changes are needed,
+include `ThirdPartyLicenses.txt` in the proposed edit scope and obtain approval
+under the change-approval rules. Report the review outcome in the handoff.
+
 ## Approved implementation work
 
 When the user explicitly requests and approves implementation, treat generated
