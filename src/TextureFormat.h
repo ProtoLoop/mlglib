@@ -151,7 +151,7 @@ public:
             kDefaultChannelCount,
             4,
             1,
-            TextureFormat::FileExtension{ "" },
+            TextureFormat::FileExtension{ ".rgba" },
             InplaceString<>("RGBA"));
         return RGBA;
     }
@@ -204,13 +204,6 @@ public:
     static Result<> CheckDimensions(
         const uint32_t width, const uint32_t height, const uint32_t mipCount);
 
-    /// Returns the texture format corresponding to the format identifier.
-    static constexpr TextureFormat GetFormat(const FormatIdentifier formatId);
-    /// Returns the texture format corresponding to the WebGPU texture format.
-    static constexpr TextureFormat GetFormat(const wgpu::TextureFormat wgpuTextureFormat);
-    /// Returns the texture format corresponding to the file extension.
-    static constexpr TextureFormat GetFormat(const FileExtension fileExtension);
-
 private:
     FormatIdentifier m_FormatId{ FormatIdentifier::Unknown };
     wgpu::TextureFormat m_WgpuFormat{ wgpu::TextureFormat::Undefined };
@@ -220,55 +213,3 @@ private:
     FileExtension m_Extension;      // File extension associated with the texture format
     InplaceString<> m_Name;         // Name of the texture format
 };
-
-constexpr TextureFormat
-TextureFormat::GetFormat(const FormatIdentifier formatId)
-{
-    switch(formatId)
-    {
-        case FormatIdentifier::RGBA:
-            return GetRGBA();
-        case FormatIdentifier::BC7:
-            return GetBC7();
-        case FormatIdentifier::ASTC:
-            return GetASTC();
-        case FormatIdentifier::Unknown:
-            return GetUnknown();
-    }
-    
-    return GetUnknown();
-}
-constexpr TextureFormat
-TextureFormat::GetFormat(const wgpu::TextureFormat wgpuTextureFormat)
-{
-    switch(wgpuTextureFormat)
-    {
-        case GetRGBA().m_WgpuFormat:
-            return GetRGBA();
-        case GetBC7().m_WgpuFormat:
-            return GetBC7();
-        case GetASTC().m_WgpuFormat:
-            return GetASTC();
-        default:
-            return GetUnknown();
-    }
-}
-
-constexpr TextureFormat
-TextureFormat::GetFormat(const TextureFormat::FileExtension fileExtension)
-{
-    if(fileExtension == GetRGBA().m_Extension)
-    {
-        return GetRGBA();
-    }
-    if(fileExtension == GetBC7().m_Extension)
-    {
-        return GetBC7();
-    }
-    if(fileExtension == GetASTC().m_Extension)
-    {
-        return GetASTC();
-    }
-
-    return GetUnknown();
-}

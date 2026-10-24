@@ -32,24 +32,6 @@
 
 namespace
 {
-/// Valid by construction
-class Motor
-{
-public:
-    Motor() = delete; // Can't be default-constructed - requires params.
-    ~Motor();
-    Motor(const Motor&) = delete; // Can't be copied - can't have two controllers for the same motor.
-    Motor& operator=(const Motor&) = delete;
-    Motor(Motor&&) = delete; // Can't be moved - violates valid by construction
-    Motor& operator=(Motor&&) = delete;
-
-    /// Use a Create() method so we can return an error - no exceptions
-    static Result<std::unique_ptr<Motor>> Create(const int motorId) noexcept;
-
-private:
-
-    explicit Motor(const int motorId) noexcept;
-};
 /// Command line arguments for the cook tool.
 struct CmdLineArgs
 {
@@ -185,9 +167,7 @@ LoadRawTexture(const CookDirs& cookDirs, const std::string_view path)
 
     const std::filesystem::path fullPath = (cookDirs.InputDir / path);
     std::ifstream stream(fullPath, std::ios::binary);
-    MLG_CHECKV(stream.is_open(),
-        "Failed to open image file for reading: {}",
-        fullPath.string());
+    MLG_CHECKV(stream.is_open(), "Failed to open image file for reading: {}", fullPath.string());
 
     std::error_code ec;
     const uintmax_t fileSize = std::filesystem::file_size(fullPath, ec);
@@ -202,9 +182,7 @@ LoadRawTexture(const CookDirs& cookDirs, const std::string_view path)
 
     std::vector<char> fileData;
 
-    MLG_CHECKV(fileSize <= fileData.max_size(),
-        "Image file too large: {}",
-        fullPath.string());
+    MLG_CHECKV(fileSize <= fileData.max_size(), "Image file too large: {}", fullPath.string());
 
     fileData.resize(static_cast<size_t>(fileSize));
 
@@ -240,36 +218,9 @@ LoadRawTexture(const CookDirs& cookDirs, const std::string_view path)
     return MipImage::Create(uImgWidth, uImgHeight, TextureFormat::GetRGBA(), std::move(stbData));
 }
 
-/// Copies an image from the input directory to the output directory.
-Result<>
-CopyImage(const CookDirs& cookDirs, const std::string_view path)
-{
-    const std::filesystem::path srcPath = (cookDirs.InputDir / path);
-    const std::filesystem::path dstPath = (cookDirs.OutputDir / path);
-
-    // Ensure the output directory exists before writing the texture.
-    std::error_code ec;
-    std::filesystem::create_directories(dstPath.parent_path(), ec);
-    MLG_CHECKV(!ec, "Failed to create output directory: {}", ec.message());
-
-    MLG_INFO("Writing: {} -> {}...", srcPath.string(), dstPath.string());
-
-    // Copy the original file - it will be the fallback for HW that doesn't support the compressed
-    // formats.
-    std::filesystem::copy(srcPath, dstPath, std::filesystem::copy_options::overwrite_existing, ec);
-    MLG_CHECKV(!ec,
-        "Failed to copy texture from {} to {}: {}",
-        srcPath.string(),
-        dstPath.string(),
-        ec.message());
-
-    return Result<>::Ok;
-}
-
 /// Writes a mipmapped texture to the output directory in KTX2 format.
 Result<>
-WriteTexture(
-    const CookDirs& cookDirs, const std::string_view path, const MipMapChain& mipmapChain)
+WriteTexture(const CookDirs& cookDirs, const std::string_view path, const MipMapChain& mipmapChain)
 {
     const std::filesystem::path srcPath = (cookDirs.InputDir / path);
     const std::filesystem::path dstPath = (cookDirs.OutputDir / path);
@@ -304,17 +255,43 @@ CookTexture(CookTextureWorkerParams& params)
     auto rawImageResult = LoadRawTexture(params.CookDirs, params.TexturePath);
     MLG_CHECK(rawImageResult);
 
-    auto bc7Result = EncodeBC7(*rawImageResult, params.TexturePath);
+    MipImage baseMip = std::move(*rawImageResult);
+
+    // Create one block aligned mip chain for all encodings.
+    // This works ok when using bc7 and astc4x4 because they have the same block size.
+    // But if we ever use a different block size for ASTC, we may need to handle it differently.
+
+    const TextureFormat& bc7Format = TextureFormat::GetBC7();
+    const TextureFormat& astcFormat = TextureFormat::GetASTC();
+
+    const size_t bc7BlockAlignedWidth = bc7Format.GetBlockAlignedWidth(baseMip.GetWidth());
+    const size_t bc7BlockAlignedHeight = bc7Format.GetBlockAlignedHeight(baseMip.GetHeight());
+    const size_t astcBlockAlignedWidth = astcFormat.GetBlockAlignedWidth(baseMip.GetWidth());
+    const size_t astcBlockAlignedHeight = astcFormat.GetBlockAlignedHeight(baseMip.GetHeight());
+
+    const size_t blockAlignedWidth = std::max(bc7BlockAlignedWidth, astcBlockAlignedWidth);
+    const size_t blockAlignedHeight = std::max(bc7BlockAlignedHeight, astcBlockAlignedHeight);
+
+    if(baseMip.GetWidth() != blockAlignedWidth || baseMip.GetHeight() != blockAlignedHeight)
+    {
+        auto resizeResult = baseMip.Resize(static_cast<uint32_t>(blockAlignedWidth),
+            static_cast<uint32_t>(blockAlignedHeight));
+        MLG_CHECK(resizeResult, "Failed to resize base image to block aligned dimensions.");
+        baseMip = std::move(*resizeResult);
+    }
+
+    auto mipChainResult = MipMapChain::Create(std::move(baseMip));
+    MLG_CHECK(mipChainResult, "Failed to generate mip chain for texture: {}", params.TexturePath);
+
+    auto bc7Result = EncodeBC7(*mipChainResult, params.TexturePath);
     MLG_CHECK(bc7Result, "Failed to encode BC7 texture: {}", params.TexturePath);
 
-    auto astcResult = EncodeASTC(*rawImageResult, params.TexturePath);
+    auto astcResult = EncodeASTC(*mipChainResult, params.TexturePath);
     MLG_CHECK(astcResult, "Failed to encode ASTC texture: {}", params.TexturePath);
 
-    MLG_CHECK(CopyImage(params.CookDirs, params.TexturePath));
-
     MLG_CHECK(WriteTexture(params.CookDirs, params.TexturePath, *bc7Result));
-
     MLG_CHECK(WriteTexture(params.CookDirs, params.TexturePath, *astcResult));
+    MLG_CHECK(WriteTexture(params.CookDirs, params.TexturePath, *mipChainResult));
 
     MLG_INFO("Cooked texture: {} in {} ms", params.TexturePath, timer.GetElapsedSeconds());
 

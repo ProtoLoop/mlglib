@@ -1,6 +1,0 @@
-# Zstandard
-
-`zstd.c` was generated using upstream's `python3 combine.py -r ../../lib -x legacy/zstd_legacy.h -o zstd.c zstd-in.c`.
-Upstream: https://github.com/facebook/zstd
-Reference commit: 49cf51799ea051457f57243527aa2058f999f005
-License: BSD-3-Clause; see LICENSE.

@@ -73,22 +73,19 @@ MipMapChain::Create(MipImage&& baseImage)
     const uint32_t mipCount =
         TextureFormat::GetMaxMipCount(baseImage.GetWidth(), baseImage.GetHeight());
 
-    const MipImage* prevImage = &baseImage;
-
     BoundedVector<MipImage> mipmaps(mipCount);
     mipmaps.emplace_back(std::move(baseImage));
 
     for(uint32_t mip = 1; mip < mipCount; ++mip)
     {
-        const uint32_t mipWidth = std::max(prevImage->GetWidth() >> 1, 1u);
-        const uint32_t mipHeight = std::max(prevImage->GetHeight() >> 1, 1u);
+        const MipImage& prevImage = mipmaps.back();
+        const uint32_t mipWidth = std::max(prevImage.GetWidth() >> 1, 1u);
+        const uint32_t mipHeight = std::max(prevImage.GetHeight() >> 1, 1u);
 
-        auto resizeResult = prevImage->Resize(mipWidth, mipHeight);
+        auto resizeResult = prevImage.Resize(mipWidth, mipHeight);
         MLG_CHECK(resizeResult, "Failed to resize image");
 
         mipmaps.emplace_back(std::move(*resizeResult));
-
-        prevImage = &mipmaps.back();
     }
 
     return Create(std::move(mipmaps));

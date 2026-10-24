@@ -31,8 +31,9 @@ Ktx2TextureInfo::GetInfo(const std::span<const std::byte> buffer)
     ktx2::FileHeader fileHeader{};
     std::memcpy(&fileHeader, buffer.data(), sizeof(fileHeader));
     MLG_CHECK(fileHeader.VkFormat == ktx2::kVkFormatBc7Srgb
-            || fileHeader.VkFormat == ktx2::kVkFormatAstc4x4Srgb,
-        "KTX2 loader requires BC7 or ASTC 4x4 sRGB data");
+            || fileHeader.VkFormat == ktx2::kVkFormatAstc4x4Srgb
+            || fileHeader.VkFormat == ktx2::kVkFormatRgba8Srgb,
+        "KTX2 loader requires BC7, ASTC 4x4, or RGBA8 sRGB data");
     MLG_CHECK(fileHeader.TypeSize == 1, "Invalid KTX2 type size");
     MLG_CHECK(fileHeader.PixelDepth == 0 && fileHeader.LayerCount == 0 && fileHeader.FaceCount == 1,
         "KTX2 loader requires a non-array 2D texture");
@@ -40,13 +41,22 @@ Ktx2TextureInfo::GetInfo(const std::span<const std::byte> buffer)
     MLG_CHECK(fileHeader.GlobalDataOffset == 0 && fileHeader.GlobalDataSize == 0,
         "Unexpected KTX2 supercompression global data");
 
+    TextureFormat format = TextureFormat::GetRGBA();
+    if(fileHeader.VkFormat == ktx2::kVkFormatBc7Srgb)
+    {
+        format = TextureFormat::GetBC7();
+    }
+    else if(fileHeader.VkFormat == ktx2::kVkFormatAstc4x4Srgb)
+    {
+        format = TextureFormat::GetASTC();
+    }
+
     const Ktx2TextureInfo info //
         {
             .Width = fileHeader.PixelWidth,
             .Height = fileHeader.PixelHeight,
             .MipCount = fileHeader.LevelCount,
-            .Format = fileHeader.VkFormat == ktx2::kVkFormatBc7Srgb ? TextureFormat::GetBC7()
-                                                                    : TextureFormat::GetASTC(),
+            .Format = format,
         };
     MLG_CHECK(info.Format.CheckDimensions(info.Width, info.Height, info.MipCount));
 
@@ -56,35 +66,73 @@ Ktx2TextureInfo::GetInfo(const std::span<const std::byte> buffer)
 
     const uint64_t descriptorOffset = fileHeader.DescriptorOffset;
     const uint64_t descriptorSize = fileHeader.DescriptorSize;
-    MLG_CHECK(descriptorSize == sizeof(ktx2::DataFormatDescriptor),
-        "Unexpected KTX2 descriptor size");
+    const size_t expectedDescriptorSize = format.IsRgba()
+        ? ktx2::kRgbaDescriptorByteCount
+        : ktx2::kSingleSampleDescriptorByteCount;
+    MLG_CHECK(descriptorSize == expectedDescriptorSize, "Unexpected KTX2 descriptor size");
     MLG_CHECK(descriptorOffset >= mipLevelIndexEnd
             && descriptorOffset % ktx2::kUint32ByteCount == 0
             && ContainsRange(buffer, descriptorOffset, descriptorSize),
         "Invalid KTX2 descriptor range");
-    ktx2::DataFormatDescriptor descriptor{};
+    ktx2::DataFormatDescriptorHeader descriptor{};
     std::memcpy(&descriptor,
         buffer.subspan(static_cast<size_t>(descriptorOffset)).data(),
         sizeof(descriptor));
+    const uint32_t expectedVersionAndSize = format.IsRgba()
+        ? ktx2::kRgbaDescriptorVersionAndSize
+        : ktx2::kDescriptorVersionAndSize;
     MLG_CHECK(descriptor.TotalSize == descriptorSize
             && descriptor.VendorAndDescriptorType == 0
-            && descriptor.VersionAndBlockSize == ktx2::kDescriptorVersionAndSize,
+            && descriptor.VersionAndBlockSize == expectedVersionAndSize,
         "Unsupported KTX2 descriptor");
-    MLG_CHECK(descriptor.ColorModelPrimariesTransferFlags
-                == (info.Format.IsBC7() ? ktx2::kBc7SrgbStraightAlphaBt709
-                                        : ktx2::kAstcSrgbStraightAlphaBt709)
-            && descriptor.TexelBlockDimensions
-                == (info.Format.IsBC7() ? ktx2::kBc7TexelBlockDimensions
-                                        : ktx2::kAstc4x4TexelBlockDimensions)
-            && descriptor.BytesPlane0To3 == info.Format.GetBytesPerBlock()
-            && descriptor.BytesPlane4To7 == 0
-            && descriptor.SampleBitOffsetLengthChannel
-                == (info.Format.IsBC7() ? ktx2::kBc7SampleBitOffsetLengthChannel
-                                        : ktx2::kAstcSampleBitOffsetLengthChannel)
-            && descriptor.SamplePosition == 0
-            && descriptor.SampleLower == 0
-            && descriptor.SampleUpper == ktx2::kUnormSampleUpper,
-        "KTX2 descriptor does not match the texture format or supported color properties");
+    MLG_CHECK(descriptor.BytesPlane0To3 == format.GetBytesPerBlock()
+            && descriptor.BytesPlane4To7 == 0,
+        "KTX2 descriptor does not match the texture format's byte size");
+
+    const size_t samplesOffset = static_cast<size_t>(descriptorOffset) + sizeof(descriptor);
+    if(format.IsRgba())
+    {
+        MLG_CHECK(descriptor.ColorModelPrimariesTransferFlags == ktx2::kRgba8SrgbStraightAlphaBt709
+                && descriptor.TexelBlockDimensions == ktx2::kRgba8TexelBlockDimensions,
+            "KTX2 descriptor does not match RGBA8 sRGB color properties");
+        constexpr uint32_t kExpectedChannels[] = {
+            ktx2::kRgba8RedSampleBitOffsetLengthChannel,
+            ktx2::kRgba8GreenSampleBitOffsetLengthChannel,
+            ktx2::kRgba8BlueSampleBitOffsetLengthChannel,
+            ktx2::kRgba8AlphaSampleBitOffsetLengthChannel,
+        };
+        for(size_t channel = 0; channel < ktx2::kRgbaSampleCount; ++channel)
+        {
+            ktx2::DataFormatSample sample{};
+            std::memcpy(&sample,
+                buffer.subspan(samplesOffset + (channel * sizeof(sample))).data(),
+                sizeof(sample));
+            MLG_CHECK(sample.BitOffsetLengthChannel == kExpectedChannels[channel]
+                    && sample.Position == 0
+                    && sample.Lower == 0
+                    && sample.Upper == ktx2::kRgba8SampleUpper,
+                "Invalid KTX2 RGBA sample {}",
+                channel);
+        }
+    }
+    else
+    {
+        ktx2::DataFormatSample sample{};
+        std::memcpy(&sample, buffer.subspan(samplesOffset).data(), sizeof(sample));
+        MLG_CHECK(descriptor.ColorModelPrimariesTransferFlags
+                    == (info.Format.IsBC7() ? ktx2::kBc7SrgbStraightAlphaBt709
+                                            : ktx2::kAstcSrgbStraightAlphaBt709)
+                && descriptor.TexelBlockDimensions
+                    == (info.Format.IsBC7() ? ktx2::kBc7TexelBlockDimensions
+                                            : ktx2::kAstc4x4TexelBlockDimensions)
+                && sample.BitOffsetLengthChannel
+                    == (info.Format.IsBC7() ? ktx2::kBc7SampleBitOffsetLengthChannel
+                                            : ktx2::kAstcSampleBitOffsetLengthChannel)
+                && sample.Position == 0
+                && sample.Lower == 0
+                && sample.Upper == ktx2::kUnormSampleUpper,
+            "KTX2 descriptor does not match the texture format or supported color properties");
+    }
 
     uint64_t metadataEnd = descriptorOffset + descriptorSize;
     const uint64_t keyValueOffset = fileHeader.KeyValueOffset;

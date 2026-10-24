@@ -90,6 +90,21 @@ TextureLoader::LoadFromResource(const GpuHelper& gpuHelper,
         MLG_CHECK(pathResult, "Failed to replace extension for {} with {}", relPath, ktx2Extension);
         relPath = *pathResult;
     }
+    else if(texRsrc.HasRGBAEncoding())
+    {
+        const std::string_view rgbaExtension = TextureFormat::GetRGBA().GetExtension().AsStringView();
+        const InplaceString<> ktx2Extension =
+            InplaceString<>::Format("{}.{}", rgbaExtension, "ktx2");
+        const auto pathResult = relPath.ReplaceExtension(ktx2Extension);
+        MLG_CHECK(pathResult, "Failed to replace extension for {} with {}", relPath, ktx2Extension);
+        relPath = *pathResult;
+    }
+    else
+    {
+        MLG_CHECK(texRsrc.Encodings == TextureResourceEncoding::None,
+            "No supported cooked texture encoding for {}",
+            texturePath);
+    }
 
     const auto fullPathResult = workingDirectory.Join(relPath);
     MLG_CHECK(fullPathResult, "Failed to create full file path");

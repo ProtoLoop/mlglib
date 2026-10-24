@@ -536,14 +536,9 @@ endfunction()
 # Tool: Cook
 # ============================================================
 add_tool_executable(Cook tools/Cook/Cook.cpp)
-target_sources(Cook PRIVATE tools/Cook/Ktx2Writer.cpp tools/Cook/MipMapChain.cpp tools/Cook/Compressors.cpp tools/Cook/zstd.c)
+target_sources(Cook PRIVATE tools/Cook/Ktx2Writer.cpp tools/Cook/MipMapChain.cpp tools/Cook/Compressors.cpp)
 target_link_libraries(Cook PRIVATE bc7enc_rdo astcenc-native-static)
 target_include_directories(Cook SYSTEM PRIVATE thirdparty/stb)
-
-set_source_files_properties(tools/Cook/zstd.c PROPERTIES
-  SKIP_LINTING ON
-  COMPILE_OPTIONS "-Wno-sign-conversion;-Wno-unreachable-code"
-)
 
 # ============================================================
 # Sample: Triangle

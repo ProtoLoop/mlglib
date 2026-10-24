@@ -21,9 +21,24 @@ inline constexpr Identifier kIdentifier //
 inline constexpr size_t kFileHeaderByteCount = 80;
 inline constexpr size_t kGlobalDataOffsetFieldOffset = 64;
 inline constexpr size_t kLevelIndexEntryByteCount = 24;
-inline constexpr size_t kDescriptorByteCount = 44;
+inline constexpr size_t kDescriptorHeaderByteCount = 28;
+inline constexpr size_t kDescriptorSampleByteCount = 16;
+inline constexpr size_t kSingleSampleDescriptorByteCount =
+    kDescriptorHeaderByteCount + kDescriptorSampleByteCount;
 inline constexpr size_t kUint32ByteCount = sizeof(uint32_t);
 inline constexpr uint32_t kDescriptorVersionAndSize = 0x00280002;
+inline constexpr size_t kRgbaSampleCount = 4;
+inline constexpr size_t kRgbaDescriptorByteCount =
+    kDescriptorHeaderByteCount + (kRgbaSampleCount * kDescriptorSampleByteCount);
+inline constexpr uint32_t kRgbaDescriptorVersionAndSize = 0x00580002;
+inline constexpr uint32_t kRgba8SrgbStraightAlphaBt709 = 0x00020101;
+inline constexpr uint32_t kRgba8TexelBlockDimensions = 0;
+inline constexpr uint32_t kRgba8RedSampleBitOffsetLengthChannel = 0x00070000;
+inline constexpr uint32_t kRgba8GreenSampleBitOffsetLengthChannel = 0x01070008;
+inline constexpr uint32_t kRgba8BlueSampleBitOffsetLengthChannel = 0x02070010;
+// Alpha uses the linear qualifier even though RGB uses the sRGB transfer function.
+inline constexpr uint32_t kRgba8AlphaSampleBitOffsetLengthChannel = 0x1F070018;
+inline constexpr uint32_t kRgba8SampleUpper = 0xFF;
 inline constexpr uint32_t kBc7SrgbStraightAlphaBt709 = 0x00020186;
 inline constexpr uint32_t kAstcSrgbStraightAlphaBt709 = 0x000201A2;
 inline constexpr uint32_t kBc7TexelBlockDimensions = 0x00000303;
@@ -61,8 +76,8 @@ struct LevelIndexEntry
     uint64_t UncompressedByteLength;
 };
 
-// Data format descriptor with one basic block and one sample, as used by BC7 and ASTC.
-struct DataFormatDescriptor
+// Header for a data format descriptor with one basic block, followed by sample records.
+struct DataFormatDescriptorHeader
 {
     uint32_t TotalSize;
     uint32_t VendorAndDescriptorType;
@@ -71,28 +86,38 @@ struct DataFormatDescriptor
     uint32_t TexelBlockDimensions;
     uint32_t BytesPlane0To3;
     uint32_t BytesPlane4To7;
-    uint32_t SampleBitOffsetLengthChannel;
-    uint32_t SamplePosition;
-    uint32_t SampleLower;
-    uint32_t SampleUpper;
+};
+
+/// Describes a sample's bit range, channel, position, and value bounds within a texel block.
+struct DataFormatSample
+{
+    uint32_t BitOffsetLengthChannel;
+    uint32_t Position;
+    uint32_t Lower;
+    uint32_t Upper;
 };
 
 static_assert(std::endian::native == std::endian::little,
     "KTX2 structs require a little-endian host");
 static_assert(std::is_trivially_copyable_v<FileHeader>);
 static_assert(std::is_trivially_copyable_v<LevelIndexEntry>);
-static_assert(std::is_trivially_copyable_v<DataFormatDescriptor>);
+static_assert(std::is_trivially_copyable_v<DataFormatDescriptorHeader>);
+static_assert(std::is_standard_layout_v<DataFormatDescriptorHeader>);
+static_assert(std::is_trivially_copyable_v<DataFormatSample>);
+static_assert(std::is_standard_layout_v<DataFormatSample>);
 static_assert(sizeof(FileHeader) == kFileHeaderByteCount);
 static_assert(offsetof(FileHeader, VkFormat) == sizeof(kIdentifier));
 static_assert(offsetof(FileHeader, GlobalDataOffset) == kGlobalDataOffsetFieldOffset);
 static_assert(sizeof(LevelIndexEntry) == kLevelIndexEntryByteCount);
-static_assert(sizeof(DataFormatDescriptor) == kDescriptorByteCount);
+static_assert(sizeof(DataFormatDescriptorHeader) == kDescriptorHeaderByteCount);
+static_assert(sizeof(DataFormatSample) == kDescriptorSampleByteCount);
 
 inline constexpr uint32_t kVkFormatBc7Srgb = 146;
 inline constexpr uint32_t kVkFormatAstc4x4Srgb = 158;
+inline constexpr uint32_t kVkFormatRgba8Srgb = 43;
 } // namespace Ktx2Format
 
-/// Header for 2D BC7 or ASTC 4x4 sRGB KTX2 files without supercompression.
+/// Header for 2D BC7, ASTC 4x4, or RGBA8 sRGB KTX2 files without supercompression.
 struct Ktx2TextureInfo
 {
     uint32_t Width{ 0 };

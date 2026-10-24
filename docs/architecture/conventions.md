@@ -62,6 +62,11 @@ memory locality.
 zero, but it does not release the allocation. The vector's capacity remains
 available for the next use.
 
+## Default arguments
+
+Do not use default arguments for function or constructor parameters. Pass each
+argument explicitly so the selected behavior is visible at the call site.
+
 ## Parameters stored by value
 
 When a function or constructor stores a non-trivial movable value, such as a
