@@ -91,7 +91,7 @@ CreateScene()
                 },
             } };
 
-    return std::move(sceneDef);
+    return sceneDef;
 }
 
 class TranslucentApp : public ICoopTask<System&>

@@ -17,21 +17,21 @@ Result<std::unique_ptr<Level::CreateTask>> Level::CreateFromSceneDef(System& sys
 {
     std::unique_ptr<CreateTask> task(new CreateTask(system, std::move(sceneDef)));
     MLG_CHECK(task->Start(), "Failed to start level creation task");
-    return std::move(task);
+    return task;
 }
 
 Result<std::unique_ptr<Level::CreateTask>> Level::CreateFromBundle(System& system, const FilePath& bundlePath)
 {
     std::unique_ptr<CreateTask> task(new CreateTask(system, CreateTask::BundleParams{ .Path = bundlePath }));
     MLG_CHECK(task->Start(), "Failed to start level creation task");
-    return std::move(task);
+    return task;
 }
 
 Result<std::unique_ptr<Level::CreateTask>> Level::CreateFromGltf(System& system, const FilePath& gltfPath)
 {
     std::unique_ptr<CreateTask> task(new CreateTask(system, CreateTask::GltfParams{ .Path = gltfPath }));
     MLG_CHECK(task->Start(), "Failed to start level creation task");
-    return std::move(task);
+    return task;
 }
 
 Level::Level(std::unique_ptr<Scene>&& scene, std::unique_ptr<View>&& view)
@@ -76,7 +76,7 @@ Level::CreateTask::Take()
     auto bye = std::move(m_Level);
     m_Level.reset();
 
-    return std::move(bye);
+    return bye;
 }
 
 Result<>

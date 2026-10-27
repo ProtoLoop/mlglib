@@ -994,7 +994,7 @@ ResourceBundle::Load(const FilePath& filePath, FileFetcher& fileFetcher)
 
     MLG_CHECK(loadTask->Start(), "Failed to start load task");
 
-    return std::move(loadTask);
+    return loadTask;
 }
 
 ResourceBundle::ResourceBundle(std::vector<std::byte>&& buffer)

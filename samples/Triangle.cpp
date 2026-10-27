@@ -93,7 +93,7 @@ CreateScene()
             },
         };
 
-    return std::move(sceneDef);
+    return sceneDef;
 }
 
 class TriangleApp : public ICoopTask<System&>

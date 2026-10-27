@@ -669,5 +669,5 @@ GltfLoader::Load(const std::string_view path)
             .NodeDefs = std::move(*rootNodeDefs),
         };
         
-    return std::move(sceneDef);
+    return sceneDef;
 }
