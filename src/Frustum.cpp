@@ -1,7 +1,6 @@
 #include "Frustum.h"
 
 #include "BoundingVolumes.h"
-#include "Camera.h"
 
 namespace
 {
@@ -13,16 +12,54 @@ ScreenToNdc(const Vec2f& screenPos, const uint32_t screenWidth, const uint32_t s
 
     return Vec2f((2.0f * x) - 1.0f, 1.0f - (2.0f * y));
 }
+
+Vec4f
+NormalizePlane(const Vec4f& plane)
+{
+    return plane / plane.xyz().Length();
+}
 } // namespace
 
-// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-Frustum::Frustum(const Camera& camera)
+Result<Frustum>
+Frustum::Create(const ProjectionSettings& settings)
 {
-    const Mat44f& VP = camera.GetViewProj();
-    const Vec4f r0(VP[0][0], VP[1][0], VP[2][0], VP[3][0]);
-    const Vec4f r1(VP[0][1], VP[1][1], VP[2][1], VP[3][1]);
-    const Vec4f r2(VP[0][2], VP[1][2], VP[2][2], VP[3][2]);
-    const Vec4f r3(VP[0][3], VP[1][3], VP[2][3], VP[3][3]);
+    MLG_CHECKV(settings.Fov.GetValue() > 0 && settings.Fov.GetValue() < std::numbers::pi_v<float>,
+        "FOV must be between 0 and 180 degrees");
+    MLG_CHECKV(settings.NearClip > 0, "Near clip must be greater than 0");
+    MLG_CHECKV(settings.FarClip > 0, "Far clip must be greater than 0");
+    MLG_CHECKV(settings.NearClip < settings.FarClip, "Near clip must be less than far clip");
+    MLG_CHECKV(settings.AspectRatio > 0, "Aspect ratio must be greater than 0");
+
+    return Frustum(settings);
+}
+
+Result<Frustum>
+Frustum::Create(const ProjectionSettings& settings,
+    const Rect& selectRect,
+    const uint32_t screenWidth,
+    const uint32_t screenHeight)
+{
+    MLG_CHECKV(settings.Fov.GetValue() > 0 && settings.Fov.GetValue() < std::numbers::pi_v<float>,
+        "FOV must be between 0 and 180 degrees");
+    MLG_CHECKV(settings.NearClip > 0, "Near clip must be greater than 0");
+    MLG_CHECKV(settings.FarClip > 0, "Far clip must be greater than 0");
+    MLG_CHECKV(settings.NearClip < settings.FarClip, "Near clip must be less than far clip");
+    MLG_CHECKV(settings.AspectRatio > 0, "Aspect ratio must be greater than 0");
+    MLG_CHECKV(screenWidth > 0, "Screen width must be non-zero");
+    MLG_CHECKV(screenHeight > 0, "Screen height must be non-zero");
+
+    return Frustum(settings, selectRect, screenWidth, screenHeight);
+}
+
+Frustum::Frustum(const ProjectionSettings& settings)
+    : m_Matrix(Mat44f::PerspectiveLH(
+          settings.Fov, settings.AspectRatio, settings.NearClip, settings.FarClip)),
+      m_Settings(settings)
+{
+    const Vec4f r0(m_Matrix[0][0], m_Matrix[1][0], m_Matrix[2][0], m_Matrix[3][0]);
+    const Vec4f r1(m_Matrix[0][1], m_Matrix[1][1], m_Matrix[2][1], m_Matrix[3][1]);
+    const Vec4f r2(m_Matrix[0][2], m_Matrix[1][2], m_Matrix[2][2], m_Matrix[3][2]);
+    const Vec4f r3(m_Matrix[0][3], m_Matrix[1][3], m_Matrix[2][3], m_Matrix[3][3]);
 
     m_Planes[kLeft] = Vec4f(r3 + r0);
     m_Planes[kRight] = Vec4f(r3 - r0);
@@ -45,11 +82,13 @@ Frustum::Frustum(const Camera& camera)
     m_Planes[kFar] /= lf;
 }
 
-// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-Frustum::Frustum(const Camera& camera,
+Frustum::Frustum(const ProjectionSettings& settings,
     const Rect& selectRect,
     const uint32_t screenWidth,
     const uint32_t screenHeight)
+    : m_Matrix(Mat44f::PerspectiveLH(
+          settings.Fov, settings.AspectRatio, settings.NearClip, settings.FarClip)),
+      m_Settings(settings)
 {
     uint32_t srcW = screenWidth, scrH = screenHeight;
     if(!MLG_VERIFY(screenWidth > 0, "Screen width must be non-zero"))
@@ -68,8 +107,6 @@ Frustum::Frustum(const Camera& camera,
     const Vec2f p01(p00.x, p11.y);
     const Vec2f p10(p11.x, p00.y);
 
-    const PerspectiveProjection& projection = camera.GetProjection();
-
     // Normalized device coordinates.
     const Vec2f ndc00 = ScreenToNdc(p00, srcW, scrH);
     const Vec2f ndc11 = ScreenToNdc(p11, srcW, scrH);
@@ -77,36 +114,48 @@ Frustum::Frustum(const Camera& camera,
     const Vec2f ndc10 = ScreenToNdc(p10, srcW, scrH);
 
     // Unprojected rays in camera space.
-    const float tanHalfFov = std::tan(projection.GetFov().GetValue() * 0.5f);
-    const float aspect = projection.GetAspectRatio();
+    const float tanHalfFov = std::tan(settings.Fov.GetValue() * 0.5f);
+    const float aspect = settings.AspectRatio;
     const float xScale = aspect * tanHalfFov;
     const Vec3f ray00 = Vec3f(ndc00.x * xScale, ndc00.y * tanHalfFov, 1);
     const Vec3f ray11 = Vec3f(ndc11.x * xScale, ndc11.y * tanHalfFov, 1);
     const Vec3f ray01 = Vec3f(ndc01.x * xScale, ndc01.y * tanHalfFov, 1);
     const Vec3f ray10 = Vec3f(ndc10.x * xScale, ndc10.y * tanHalfFov, 1);
 
-    // Frustum plane normals in world space.
-    const TrTransformf& wsCameraXForm = camera.GetWorldSpaceTransform();
-    const Vec3f leftNormal = (wsCameraXForm.R * ray00.Cross(ray01)).Normalize();
-    const Vec3f rightNormal = (wsCameraXForm.R * ray11.Cross(ray10)).Normalize();
-    const Vec3f topNormal = (wsCameraXForm.R * ray10.Cross(ray00)).Normalize();
-    const Vec3f bottomNormal = (wsCameraXForm.R * ray01.Cross(ray11)).Normalize();
-    const Vec3f nearNormal = (wsCameraXForm.R * Vec3f(0, 0, 1)).Normalize();
-    const Vec3f farNormal = -nearNormal;
+    // Frustum plane normals in local space.
+    const Vec3f leftNormal = ray00.Cross(ray01).Normalize();
+    const Vec3f rightNormal = ray11.Cross(ray10).Normalize();
+    const Vec3f topNormal = ray10.Cross(ray00).Normalize();
+    const Vec3f bottomNormal = ray01.Cross(ray11).Normalize();
 
-    // Point on the near plane in world space.
-    const Vec3f pnear = wsCameraXForm.T + (wsCameraXForm.R * Vec3f(0, 0, projection.GetNearClip()));
+    // Frustum planes in local space.
+    m_Planes[kLeft] = Vec4f(leftNormal, 0);
+    m_Planes[kRight] = Vec4f(rightNormal, 0);
+    m_Planes[kTop] = Vec4f(topNormal, 0);
+    m_Planes[kBottom] = Vec4f(bottomNormal, 0);
+    m_Planes[kNear] = Vec4f(0, 0, 1, -settings.NearClip);
+    m_Planes[kFar] = Vec4f(0, 0, -1, settings.FarClip);
+}
 
-    // Point on the far plane in world space.
-    const Vec3f pfar = wsCameraXForm.T + (wsCameraXForm.R * Vec3f(0, 0, projection.GetFarClip()));
+Frustum
+Frustum::Transform(const TrTransformf& transform) const
+{
+    return Transform(transform.ToMatrix());
+}
 
-    // Frustum planes in world space.
-    m_Planes[kLeft] = Vec4f(leftNormal, -leftNormal.Dot(wsCameraXForm.T));
-    m_Planes[kRight] = Vec4f(rightNormal, -rightNormal.Dot(wsCameraXForm.T));
-    m_Planes[kTop] = Vec4f(topNormal, -topNormal.Dot(wsCameraXForm.T));
-    m_Planes[kBottom] = Vec4f(bottomNormal, -bottomNormal.Dot(wsCameraXForm.T));
-    m_Planes[kNear] = Vec4f(nearNormal, -nearNormal.Dot(pnear));
-    m_Planes[kFar] = Vec4f(farNormal, -farNormal.Dot(pfar));
+Frustum
+Frustum::Transform(const Mat44f& transform) const
+{
+    const Mat44f invTranspose = transform.Inverse().Transpose();
+
+    return Frustum(NormalizePlane(invTranspose * m_Planes[kLeft]),
+        NormalizePlane(invTranspose * m_Planes[kRight]),
+        NormalizePlane(invTranspose * m_Planes[kTop]),
+        NormalizePlane(invTranspose * m_Planes[kBottom]),
+        NormalizePlane(invTranspose * m_Planes[kNear]),
+        NormalizePlane(invTranspose * m_Planes[kFar]),
+        m_Matrix,
+        m_Settings);
 }
 
 Frustum::ContainsResult

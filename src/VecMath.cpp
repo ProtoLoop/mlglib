@@ -379,7 +379,7 @@ Rect::Rect(const RectParams& params) noexcept
 }
 
 bool
-Rect::Contains(const Point2& point) const noexcept
+Rect::Contains(const Point2d& point) const noexcept
 {
     return point.GetX() >= m_X
         && point.GetX() < m_X + static_cast<int>(m_Width)

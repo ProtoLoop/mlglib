@@ -12,7 +12,8 @@
 #include <optional>
 #include <vector>
 
-class Camera;
+struct ProjectionSettings;
+class Frustum;
 class ResourceBundle;
 class System;
 class ThreadPool;
@@ -39,7 +40,11 @@ public:
 
     /// Renders the scene from the perspective of the camera into the specified extents.
     /// The render target will be resized if necessary to accommodate the specified extents.
-    Result<> Render(const Camera& camera, const Dimension2& dstExtents);
+    /// Currently Render() overrides the aspect ratio of the projection settings to match
+    /// the destination extents.
+    Result<> Render(const TrTransformf& wsCameraXForm,
+        const ProjectionSettings& projectionSettings,
+        const Dimension2d& dstExtents);
 
     Result<> Composite(const GpuRenderTarget& target);
 
@@ -60,7 +65,7 @@ private:
         std::vector<GpuMaterialProperties>&& materialProperties);
 
     /// Collects all camera-visible meshes.
-    void CullMeshes(const Camera& camera);
+    void CullMeshes(const TrTransformf& wsCameraXForm, const Frustum& frustum);
 
     // Sync updates from CPU -> GPU.
     Result<> SyncToGpu();
@@ -68,7 +73,8 @@ private:
     /// Calls a GPU compute shader to transform the scene nodes into camera space.
     Result<> TransformNodes(const wgpu::Device& gpuDevice,
         const wgpu::CommandEncoder& cmdEncoder,
-        const Camera& camera);
+        const TrTransformf& wsCameraXForm,
+        const Frustum& frustum);
 
     const GpuHelper* m_GpuHelper{ nullptr };
 
@@ -98,7 +104,6 @@ private:
 class View::CreateTask : public ICoopTask<>
 {
 public:
-
     CreateTask() = delete;
     ~CreateTask() override = default;
     CreateTask(const CreateTask&) = delete;
@@ -110,7 +115,7 @@ public:
 
 private:
     friend class View;
-    
+
     enum class Stage
     {
         None,

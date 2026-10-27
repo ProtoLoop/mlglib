@@ -254,11 +254,11 @@ TranslucentApp::Render()
 
     const GpuHelper& gpuHelper = m_System->GetGpuHelper();
 
-    const Dimension2 screenDims = gpuHelper.GetScreenDimensions();
+    const Dimension2d screenDims = gpuHelper.GetScreenDimensions();
 
-    m_CameraActor->SetAspectRatio(screenDims.GetAspectRatio());
-
-    MLG_CHECK(m_Level->GetView().Render(m_CameraActor->GetCamera(), screenDims),
+    MLG_CHECK(m_Level->GetView().Render(m_CameraActor->GetTransform(),
+                  m_CameraActor->GetProjectionSettings(),
+                  screenDims),
         "Failed to render view");
 
     auto targetResult = gpuHelper.GetSwapChainTexture();

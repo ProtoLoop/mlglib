@@ -835,7 +835,7 @@ GpuHelper::GetDefaultTexture() const
     return m_DefaultTexture;
 }
 
-Dimension2
+Dimension2d
 GpuHelper::GetScreenDimensions() const
 {
     int width = 0, height = 0;
@@ -843,7 +843,7 @@ GpuHelper::GetScreenDimensions() const
     {
         MLG_ERROR("Failed to get window size: {}", SDL_GetError());
     }
-    return Dimension2(static_cast<unsigned>(width), static_cast<unsigned>(height));
+    return Dimension2d(static_cast<unsigned>(width), static_cast<unsigned>(height));
 }
 
 Result<GpuRenderTarget>

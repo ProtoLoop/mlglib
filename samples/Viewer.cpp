@@ -151,12 +151,9 @@ MainLoop()
 
     const GpuHelper& gpuHelper = system->GetGpuHelper();
 
-    Dimension2 screenDims = gpuHelper.GetScreenDimensions();
-
     CameraActor cameraActor(system->GetInputMapper());
     cameraActor.SetTransform(
         TrTransformf{ .T{ 0, kDefaultCameraHeight, 0 }, .R{ cameraYaw, Vec3f::YAXIS() } });
-    cameraActor.SetAspectRatio(screenDims.GetAspectRatio());
 
     constexpr ActionMapping actionMappings[] //
         {
@@ -218,14 +215,6 @@ MainLoop()
             system->SetMouseCaptured(false);
         }
 
-        const Dimension2 curScreenDims = gpuHelper.GetScreenDimensions();
-
-        if(curScreenDims != screenDims)
-        {
-            cameraActor.SetAspectRatio(curScreenDims.GetAspectRatio());
-            screenDims = curScreenDims;
-        }
-
         if(isCameraActorActive)
         {
             cameraActor.Update(inputMapper, elapsedSeconds);
@@ -234,7 +223,9 @@ MainLoop()
         auto target = gpuHelper.GetSwapChainTexture();
         MLG_CHECKV(target, "Failed to get swap chain texture");
 
-        MLG_CHECK(view.Render(cameraActor.GetCamera(), curScreenDims));
+        MLG_CHECK(view.Render(cameraActor.GetTransform(),
+            cameraActor.GetProjectionSettings(),
+            gpuHelper.GetScreenDimensions()));
         MLG_CHECK(view.Composite(*target));
 
         const ImGuiRenderer& imGuiRenderer = system->GetImGuiRenderer();

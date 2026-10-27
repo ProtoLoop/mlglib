@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Camera.h"
+#include "VecMath.h"
+#include "ProjectionSettings.h"
 
 #include <numbers>
 
@@ -19,11 +20,11 @@ public:
 
     void Update(const InputMapper& inputMapper, const float deltaSeconds);
 
-    const Camera& GetCamera() const { return m_Camera; }
-
     void SetTransform(const TrTransformf& transform);
 
-    void SetAspectRatio(const float aspectRatio);
+    const TrTransformf& GetTransform() const { return m_CurrentTransform; }
+
+    const ProjectionSettings& GetProjectionSettings() const { return m_ProjectionSettings; }
 
 private:
     static constexpr float kHalfPi = std::numbers::pi_v<float> * 0.5f;
@@ -35,11 +36,7 @@ private:
         return UnitQuatf(Radiansf(rot), axis);
     }
 
-    Camera m_Camera //
-        {
-            PerspectiveProjection{ 1.0f },
-            TrTransformf::Identity,
-        };
-
+    TrTransformf m_CurrentTransform = TrTransformf::Identity;
     TrTransformf m_TargetTransform = TrTransformf::Identity;
+    ProjectionSettings m_ProjectionSettings;
 };

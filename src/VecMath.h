@@ -1072,11 +1072,11 @@ public:
     }
 };
 
-class Dimension2
+class Dimension2d
 {
 public:
 
-    constexpr Dimension2(const unsigned width, const unsigned height)
+    constexpr Dimension2d(const unsigned width, const unsigned height)
         : m_Width(width), m_Height(height)
     {
     }
@@ -1094,7 +1094,7 @@ public:
         return static_cast<float>(m_Width) / static_cast<float>(m_Height);
     }
 
-    constexpr friend bool operator==(const Dimension2& a, const Dimension2& b) noexcept
+    constexpr friend bool operator==(const Dimension2d& a, const Dimension2d& b) noexcept
     {
         return a.m_Width == b.m_Width && a.m_Height == b.m_Height;
     }
@@ -1103,11 +1103,11 @@ private:
     unsigned m_Height;
 };
 
-class Point2
+class Point2d
 {
 public:
 
-    constexpr Point2(const int x, const int y)
+    constexpr Point2d(const int x, const int y)
         : m_X(x), m_Y(y)
     {
     }
@@ -1115,7 +1115,7 @@ public:
     constexpr int GetX() const { return m_X; }
     constexpr int GetY() const { return m_Y; }
 
-    constexpr friend bool operator==(const Point2& a, const Point2& b) noexcept
+    constexpr friend bool operator==(const Point2d& a, const Point2d& b) noexcept
     {
         return a.m_X == b.m_X && a.m_Y == b.m_Y;
     }
@@ -1137,12 +1137,12 @@ public:
 
     explicit Rect(const RectParams& params) noexcept;
 
-    Rect(const Point2& p0, const Point2& p1) noexcept
+    Rect(const Point2d& p0, const Point2d& p1) noexcept
     : Rect(MakeRectParams(p0, p1))
     {
     }
 
-    explicit Rect(const Dimension2& dim) noexcept
+    explicit Rect(const Dimension2d& dim) noexcept
     : Rect(RectParams{.X = 0, .Y = 0, .Width = dim.GetWidth(), .Height = dim.GetHeight() })
     {
     }
@@ -1154,14 +1154,14 @@ public:
     int GetRight() const { return m_X + static_cast<int>(m_Width); }
     int GetBottom() const { return m_Y + static_cast<int>(m_Height); }
 
-    constexpr Dimension2 GetDimensions() const { return Dimension2(m_Width, m_Height); }
+    constexpr Dimension2d GetDimensions() const { return Dimension2d(m_Width, m_Height); }
 
     constexpr float GetAspectRatio() const
     {
         return GetDimensions().GetAspectRatio();
     }
 
-    bool Contains(const Point2& point) const noexcept;
+    bool Contains(const Point2d& point) const noexcept;
 
     bool Contains(const Rect& other) const noexcept;
 
@@ -1176,7 +1176,7 @@ public:
 
 private:
 
-    static constexpr RectParams MakeRectParams(const Point2& p0, const Point2& p1) noexcept
+    static constexpr RectParams MakeRectParams(const Point2d& p0, const Point2d& p1) noexcept
     {
         const int x = std::min(p0.GetX(), p1.GetX());
         const int y = std::min(p0.GetY(), p1.GetY());

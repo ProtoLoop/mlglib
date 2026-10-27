@@ -2,7 +2,6 @@
 
 #include "View.h"
 
-#include "Camera.h"
 #include "Cullers.h"
 #include "GpuHelper.h"
 #include "PerfMetrics.h"
@@ -10,7 +9,6 @@
 #include "Scene.h"
 #include "System.h"
 #include "TextureFetcher.h"
-
 
 namespace
 {
@@ -186,7 +184,9 @@ View::Create(System& system,
 }
 
 Result<>
-View::Render(const Camera& camera, const Dimension2& dstExtents)
+View::Render(const TrTransformf& wsCameraXForm,
+    const ProjectionSettings& projectionSettings,
+    const Dimension2d& dstExtents)
 {
     MLG_SCOPED_TIMER("View.Render");
 
@@ -203,7 +203,14 @@ View::Render(const Camera& camera, const Dimension2& dstExtents)
     const wgpu::CommandEncoder cmdEncoder = gpuDevice.CreateCommandEncoder(&encoderDesc);
     MLG_CHECK(cmdEncoder, "Failed to create command encoder");
 
-    MLG_CHECK(TransformNodes(gpuDevice, cmdEncoder, camera));
+    ProjectionSettings updatedSettings = projectionSettings;
+    updatedSettings.AspectRatio =
+        static_cast<float>(dstExtents.GetWidth()) / static_cast<float>(dstExtents.GetHeight());
+    auto frustumResult = Frustum::Create(updatedSettings);
+    MLG_CHECK(frustumResult);
+    const Frustum frustum = *frustumResult;
+
+    MLG_CHECK(TransformNodes(gpuDevice, cmdEncoder, wsCameraXForm, frustum));
 
     if(!m_ColorPassOutputs
         || m_ColorPassOutputs->RenderTarget->GetWidth() != dstExtents.GetWidth()
@@ -229,7 +236,7 @@ View::Render(const Camera& camera, const Dimension2& dstExtents)
     MLG_CHECK(m_ColorPass->SetInputs(colorPassInputs));
     MLG_CHECK(m_ColorPass->SetOutputs(*m_ColorPassOutputs));
 
-    CullMeshes(camera);
+    CullMeshes(wsCameraXForm, frustum);
 
     MLG_CHECK(m_ColorPass->Execute(cmdEncoder, m_CulledMeshes, m_MaterialProperties));
 
@@ -278,21 +285,21 @@ View::Composite(const GpuRenderTarget& target, const Rect& dstRect)
 // private:
 
 void
-View::CullMeshes(const Camera& camera)
+View::CullMeshes(const TrTransformf& wsCameraXForm, const Frustum& frustum)
 {
     static PerfCounter pcTotalMeshes({ .Name = "View.Meshes.Total" });
     static PerfCounter pcVisibleMeshes({ .Name = "View.Meshes.Visible" });
 
     m_CulledMeshes.clear();
 
-    const Vec3f cameraPos = camera.GetWorldSpaceTransform().T;
-    const Vec3f cameraForward = camera.GetWorldSpaceTransform().R * Vec3f::ZAXIS();
-    const Frustum frustum(camera);
+    const Vec3f cameraPos = wsCameraXForm.T;
+    const Vec3f cameraForward = wsCameraXForm.R * Vec3f::ZAXIS();
+    const Frustum wsFrustum = frustum.Transform(wsCameraXForm);
 
-    const ModelCuller modelCuller(m_Scene->GetAllModelNodes(), frustum);
+    const ModelCuller modelCuller(m_Scene->GetAllModelNodes(), wsFrustum);
     for(const ModelCuller::CulledModel& culledModel : modelCuller)
     {
-        const MeshCuller meshCuller(culledModel, frustum);
+        const MeshCuller meshCuller(culledModel, wsFrustum);
 
         for(const MeshCuller::CulledMesh& culledMesh : meshCuller)
         {
@@ -338,14 +345,18 @@ View::SyncToGpu()
 }
 
 Result<>
-View::TransformNodes(
-    const wgpu::Device& gpuDevice, const wgpu::CommandEncoder& cmdEncoder, const Camera& camera)
+View::TransformNodes(const wgpu::Device& gpuDevice,
+    const wgpu::CommandEncoder& cmdEncoder,
+    const TrTransformf& wsCameraXForm,
+    const Frustum& frustum)
 {
+    const Mat44f view = wsCameraXForm.Inverse().ToMatrix();
+    const Mat44f proj = frustum.GetMatrix();
     const ShaderInterop::CameraParams cameraParams //
         {
-            .View = camera.GetViewTransform().ToMatrix(),
-            .Projection = camera.GetProjection().GetMatrix(),
-            .ViewProj = camera.GetViewProj(),
+            .View = view,
+            .Projection = proj,
+            .ViewProj = proj * view,
         };
 
     gpuDevice.GetQueue().WriteBuffer(m_CameraParamsBuffer.GetGpuBuffer(),

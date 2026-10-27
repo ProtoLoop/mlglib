@@ -56,7 +56,7 @@ public:
 
     const Rect& GetViewPanelRect() const { return m_ViewPanelRect; }
 
-    const Point2& GetViewPanelMousePos() const { return m_ViewPanelMousePos; }
+    const Point2d& GetViewPanelMousePos() const { return m_ViewPanelMousePos; }
 
 private:
 
@@ -79,7 +79,7 @@ private:
 
     Rect m_ViewPanelRect{{.X = 0, .Y = 0, .Width = 1, .Height = 1}};
 
-    Point2 m_ViewPanelMousePos{0, 0};
+    Point2d m_ViewPanelMousePos{0, 0};
 
     bool m_CliScrollToBottom{ false };
 };

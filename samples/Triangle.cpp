@@ -1,9 +1,10 @@
-#include "Camera.h"
+
 #include "GpuHelper.h"
 #include "ImGuiRenderer.h"
 #include "Level.h"
 #include "Log.h"
 #include "PerfMetrics.h"
+#include "ProjectionSettings.h"
 #include "ResourceBundle.h"
 #include "SceneTypes.h"
 #include "Shell.h"
@@ -128,8 +129,6 @@ private:
 
     TrTransformf m_CameraXForm{ .T{ 0, 0, -4 } };
 
-    PerspectiveProjection m_Projection{ 1.0f };
-
     Stage m_Stage{ Stage::None };
 };
 
@@ -216,12 +215,12 @@ TriangleApp::Render()
 
     const GpuHelper& gpuHelper = m_System->GetGpuHelper();
 
-    const Dimension2 screenDims = gpuHelper.GetScreenDimensions();
+    const Dimension2d screenDims = gpuHelper.GetScreenDimensions();
 
-    m_Projection.SetAspectRatio(screenDims.GetAspectRatio());
-
-    const Camera camera(m_Projection, m_CameraXForm);
-    MLG_CHECK(m_Level->GetView().Render(camera, screenDims), "Failed to render view");
+    MLG_CHECK(m_Level->GetView().Render(m_CameraXForm,
+                  ProjectionSettings{},
+                  screenDims),
+        "Failed to render view");
 
     auto target = gpuHelper.GetSwapChainTexture();
     MLG_CHECK(target, "Failed to get swap chain texture");

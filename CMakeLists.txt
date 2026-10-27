@@ -399,7 +399,6 @@ set(SSG_SOURCES
   src/Level.cpp
   src/Log.cpp
   src/PerfMetrics.cpp
-  src/Projection.cpp
   src/ResourceBundle.cpp
   src/Scene.cpp
   src/SceneTypes.cpp
@@ -420,7 +419,6 @@ set(SSG_SOURCES
 set(SSG_HEADERS
   src/AssertHelper.h
   src/BoundingVolumes.h
-  src/Camera.h
   src/Containers.h
   src/CoopTask.h
   src/Cullers.h
@@ -444,7 +442,7 @@ set(SSG_HEADERS
   src/Log.h
   src/PhysicsTypes.h
   src/PerfMetrics.h
-  src/Projection.h
+  src/ProjectionSettings.h
   src/ResourceBundle.h
   src/Result.h
   src/SafeInteger.h
@@ -610,7 +608,7 @@ add_sample_executable(Orbit samples/Orbit.cpp)
 add_executable(Tests
   "tests/BoundingBox.unit.cpp"
   "tests/BoundingSphere.unit.cpp"
-  "tests/Camera.unit.cpp"
+  "tests/Frustum.unit.cpp"
   "tests/Containers.unit.cpp"
   "tests/Defer.unit.cpp"
   "tests/FilePath.unit.cpp"

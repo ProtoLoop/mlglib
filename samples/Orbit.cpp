@@ -591,7 +591,6 @@ MainLoop()
 
     CameraActor cameraActor(system->GetInputMapper());
     cameraActor.SetTransform(TrTransformf{ .T{ 0, 0, -kInitialCameraDistance } });
-    cameraActor.SetAspectRatio(gpuHelper.GetScreenDimensions().GetAspectRatio());
 
     bool pauseSim = false;
 
@@ -706,9 +705,9 @@ MainLoop()
 
             const Rect& viewPanelRect = devUi.GetViewPanelRect();
 
-            cameraActor.SetAspectRatio(viewPanelRect.GetDimensions().GetAspectRatio());
-
-            MLG_CHECK(view.Render(cameraActor.GetCamera(), viewPanelRect.GetDimensions()));
+            MLG_CHECK(view.Render(cameraActor.GetTransform(),
+                cameraActor.GetProjectionSettings(),
+                viewPanelRect.GetDimensions()));
             MLG_CHECK(view.Composite(*target, viewPanelRect));
         }
 

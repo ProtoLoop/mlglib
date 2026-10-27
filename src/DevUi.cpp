@@ -334,7 +334,7 @@ DevUi::DrawViewPanel()
             .Height = static_cast<unsigned>(avail.y),
         });
 
-    m_ViewPanelMousePos = Point2(static_cast<int>(mousePos.x - cursorPos.x),
+    m_ViewPanelMousePos = Point2d(static_cast<int>(mousePos.x - cursorPos.x),
         static_cast<int>(mousePos.y - cursorPos.y));
 
     ImGui::End();

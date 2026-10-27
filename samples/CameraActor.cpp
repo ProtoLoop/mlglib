@@ -1,7 +1,7 @@
 #include "CameraActor.h"
 
 #include "CommonActionIds.h"
-#include "Projection.h"
+#include "Frustum.h"
 
 #include <SDL3/SDL_events.h>
 
@@ -71,7 +71,7 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
     UnitQuatf yaw = UnitQuatf::Identity, pitch = UnitQuatf::Identity;
     Vec3f moveDelta(0);
 
-    TrTransformf curXform = m_Camera.GetWorldSpaceTransform();
+    TrTransformf curXform = m_CurrentTransform;
 
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveForward, actionValue))
     {
@@ -124,20 +124,12 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
     // m_CurrentTransform.R = m_CurrentTransform.R.Lerp(m_TargetTransform.R, dtR);
     curXform.R = m_TargetTransform.R;
 
-    m_Camera.SetWorldSpaceTransform(curXform);
+    m_CurrentTransform = curXform;
 }
 
 void
 CameraActor::SetTransform(const TrTransformf& transform)
 {
-    m_Camera.SetWorldSpaceTransform(transform);
+    m_CurrentTransform = transform;
     m_TargetTransform = transform;
-}
-
-void
-CameraActor::SetAspectRatio(const float aspectRatio)
-{
-    PerspectiveProjection proj = m_Camera.GetProjection();
-    proj.SetAspectRatio(aspectRatio);
-    m_Camera.SetProjection(proj);
 }

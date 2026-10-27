@@ -36,7 +36,7 @@ public:
     const wgpu::Instance& GetInstance() const;
     const wgpu::Device& GetDevice() const;
     const wgpu::Texture& GetDefaultTexture() const;
-    Dimension2 GetScreenDimensions() const;
+    Dimension2d GetScreenDimensions() const;
     Result<GpuRenderTarget> GetSwapChainTexture() const;
     wgpu::TextureFormat GetSwapChainFormat() const;
     bool HasTextureFormat(TextureFormat::FormatIdentifier formatId) const;
