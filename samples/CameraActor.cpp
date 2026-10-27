@@ -1,6 +1,7 @@
 #include "CameraActor.h"
 
 #include "CommonActionIds.h"
+#include "Projection.h"
 
 #include <SDL3/SDL_events.h>
 
@@ -70,33 +71,35 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
     UnitQuatf yaw = UnitQuatf::Identity, pitch = UnitQuatf::Identity;
     Vec3f moveDelta(0);
 
+    TrTransformf curXform = m_Camera.GetWorldSpaceTransform();
+
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveForward, actionValue))
     {
-        moveDelta += m_CurrentTransform.R * Vec3f(0, 0, actionValue);
+        moveDelta += curXform.R * Vec3f(0, 0, actionValue);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveBackward, actionValue))
     {
-        moveDelta += m_CurrentTransform.R * Vec3f(0, 0, actionValue);
+        moveDelta += curXform.R * Vec3f(0, 0, actionValue);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveLeft, actionValue))
     {
-        moveDelta += m_CurrentTransform.R * Vec3f(actionValue, 0, 0);
+        moveDelta += curXform.R * Vec3f(actionValue, 0, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveRight, actionValue))
     {
-        moveDelta += m_CurrentTransform.R * Vec3f(actionValue, 0, 0);
+        moveDelta += curXform.R * Vec3f(actionValue, 0, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveUp, actionValue))
     {
-        moveDelta += m_CurrentTransform.R * Vec3f(0, actionValue, 0);
+        moveDelta += curXform.R * Vec3f(0, actionValue, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveDown, actionValue))
     {
-        moveDelta += m_CurrentTransform.R * Vec3f(0, actionValue, 0);
+        moveDelta += curXform.R * Vec3f(0, actionValue, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveUpDown, actionValue))
     {
-        moveDelta += m_CurrentTransform.R * Vec3f(0, actionValue, 0);
+        moveDelta += curXform.R * Vec3f(0, actionValue, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::LookLeftRight, actionValue))
     {
@@ -117,7 +120,24 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
     const float dtT = deltaSeconds / kTransformTimeToTarget;
     // const float dtR = deltaSeconds / kRotationTimeToTarget;
 
-    m_CurrentTransform.T = m_CurrentTransform.T.Lerp(m_TargetTransform.T, dtT);
+    curXform.T = curXform.T.Lerp(m_TargetTransform.T, dtT);
     // m_CurrentTransform.R = m_CurrentTransform.R.Lerp(m_TargetTransform.R, dtR);
-    m_CurrentTransform.R = m_TargetTransform.R;
+    curXform.R = m_TargetTransform.R;
+
+    m_Camera.SetWorldSpaceTransform(curXform);
+}
+
+void
+CameraActor::SetTransform(const TrTransformf& transform)
+{
+    m_Camera.SetWorldSpaceTransform(transform);
+    m_TargetTransform = transform;
+}
+
+void
+CameraActor::SetAspectRatio(const float aspectRatio)
+{
+    PerspectiveProjection proj = m_Camera.GetProjection();
+    proj.SetAspectRatio(aspectRatio);
+    m_Camera.SetProjection(proj);
 }

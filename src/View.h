@@ -12,6 +12,7 @@
 #include <optional>
 #include <vector>
 
+class Camera;
 class ResourceBundle;
 class System;
 class ThreadPool;
@@ -36,7 +37,9 @@ public:
         const ResourceBundle& resourceBundle,
         const Scene& scene);
 
-    Result<> Render(const CameraView& cameraView);
+    /// Renders the scene from the perspective of the camera into the specified extents.
+    /// The render target will be resized if necessary to accommodate the specified extents.
+    Result<> Render(const Camera& camera, const Dimension2& dstExtents);
 
     Result<> Composite(const GpuRenderTarget& target);
 
@@ -57,7 +60,7 @@ private:
         std::vector<GpuMaterialProperties>&& materialProperties);
 
     /// Collects all camera-visible meshes.
-    void CullMeshes(const CameraView& cameraView);
+    void CullMeshes(const Camera& camera);
 
     // Sync updates from CPU -> GPU.
     Result<> SyncToGpu();
@@ -65,7 +68,7 @@ private:
     /// Calls a GPU compute shader to transform the scene nodes into camera space.
     Result<> TransformNodes(const wgpu::Device& gpuDevice,
         const wgpu::CommandEncoder& cmdEncoder,
-        const CameraView& cameraView);
+        const Camera& camera);
 
     const GpuHelper* m_GpuHelper{ nullptr };
 

@@ -380,13 +380,13 @@ add_custom_target(copy_sponza
 set(SSG_SOURCES
   src/AssertHelper.cpp
   src/BoundingVolumes.cpp
-  src/Camera.cpp
   src/Cullers.cpp
   src/cgltf.cpp
   src/CoopTask.cpp
   src/DevUi.cpp
   src/FileFetcher.cpp
   src/FilePath.cpp
+  src/Frustum.cpp
   src/GltfLoader.cpp
   src/GpuColorPass.cpp
   src/GpuCompositorPass.cpp
@@ -399,6 +399,7 @@ set(SSG_SOURCES
   src/Level.cpp
   src/Log.cpp
   src/PerfMetrics.cpp
+  src/Projection.cpp
   src/ResourceBundle.cpp
   src/Scene.cpp
   src/SceneTypes.cpp
@@ -427,6 +428,7 @@ set(SSG_HEADERS
   src/DevUi.h
   src/FileFetcher.h
   src/FilePath.h
+  src/Frustum.h
   src/GltfLoader.h
   src/GpuColorPass.h
   src/GpuCompositorPass.h
@@ -442,6 +444,7 @@ set(SSG_HEADERS
   src/Log.h
   src/PhysicsTypes.h
   src/PerfMetrics.h
+  src/Projection.h
   src/ResourceBundle.h
   src/Result.h
   src/SafeInteger.h

@@ -126,14 +126,9 @@ private:
 
     std::unique_ptr<Level> m_Level;
 
-    Viewport m_Viewport //
-        {
-            { .x = 0, .y = 0, .width = 1, .height = 1, .minDepth = 0, .maxDepth = 1 },
-        };
-
     TrTransformf m_CameraXForm{ .T{ 0, 0, -4 } };
 
-    Camera m_Camera{ m_Viewport };
+    PerspectiveProjection m_Projection{ 1.0f };
 
     Stage m_Stage{ Stage::None };
 };
@@ -189,7 +184,7 @@ TriangleApp::OnUpdate()
                     m_Level = std::move(*levelResult);
                     m_Stage = TriangleApp::Stage::Running;
                 }
-                
+
                 m_LevelCreateTask.reset();
             }
             break;
@@ -221,11 +216,12 @@ TriangleApp::Render()
 
     const GpuHelper& gpuHelper = m_System->GetGpuHelper();
 
-    m_Viewport = Viewport(gpuHelper.GetScreenDimensions());
-    m_Camera.SetViewport(m_Viewport);
+    const Dimension2 screenDims = gpuHelper.GetScreenDimensions();
 
-    const CameraView cameraView(m_Camera, m_CameraXForm);
-    MLG_CHECK(m_Level->GetView().Render(cameraView), "Failed to render view");
+    m_Projection.SetAspectRatio(screenDims.GetAspectRatio());
+
+    const Camera camera(m_Projection, m_CameraXForm);
+    MLG_CHECK(m_Level->GetView().Render(camera, screenDims), "Failed to render view");
 
     auto target = gpuHelper.GetSwapChainTexture();
     MLG_CHECK(target, "Failed to get swap chain texture");

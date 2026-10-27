@@ -334,8 +334,8 @@ DevUi::DrawViewPanel()
             .Height = static_cast<unsigned>(avail.y),
         });
 
-    m_ViewPanelMousePos.X = static_cast<int>(mousePos.x - cursorPos.x);
-    m_ViewPanelMousePos.Y = static_cast<int>(mousePos.y - cursorPos.y);
+    m_ViewPanelMousePos = Point2(static_cast<int>(mousePos.x - cursorPos.x),
+        static_cast<int>(mousePos.y - cursorPos.y));
 
     ImGui::End();
     ImGui::PopStyleVar(3);
@@ -431,8 +431,8 @@ DevUi::DrawStatusBarPanel() const // NOLINT(readability-convert-member-functions
     const auto statusText = InplaceString<>::Format("SPF: {:.3f} ms | FPS: {:.1f} | mouse: {},{}",
         ImGui::GetIO().DeltaTime * 1000.0f,
         1.0f / ImGui::GetIO().DeltaTime,
-        m_ViewPanelMousePos.X,
-        m_ViewPanelMousePos.Y);
+        m_ViewPanelMousePos.GetX(),
+        m_ViewPanelMousePos.GetY());
 
     ImGui::TextUnformatted(statusText.c_str());
 

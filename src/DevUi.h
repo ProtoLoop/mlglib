@@ -79,7 +79,7 @@ private:
 
     Rect m_ViewPanelRect{{.X = 0, .Y = 0, .Width = 1, .Height = 1}};
 
-    Point2 m_ViewPanelMousePos{.X = 0, .Y = 0};
+    Point2 m_ViewPanelMousePos{0, 0};
 
     bool m_CliScrollToBottom{ false };
 };

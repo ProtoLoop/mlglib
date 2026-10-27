@@ -1076,31 +1076,52 @@ class Dimension2
 {
 public:
 
-    unsigned Width;
-    unsigned Height;
+    constexpr Dimension2(const unsigned width, const unsigned height)
+        : m_Width(width), m_Height(height)
+    {
+    }
+
+    constexpr unsigned GetWidth() const { return m_Width; }
+    constexpr unsigned GetHeight() const { return m_Height; }
 
     constexpr float GetAspectRatio() const
     {
-        MLG_ASSERT(Height != 0, "Height must be non-zero to compute aspect ratio");
-        return static_cast<float>(Width) / static_cast<float>(Height);
+        if(!MLG_VERIFY(m_Height != 0, "Height must be non-zero to compute aspect ratio"))
+        {
+            return 1;
+        }
+
+        return static_cast<float>(m_Width) / static_cast<float>(m_Height);
     }
 
     constexpr friend bool operator==(const Dimension2& a, const Dimension2& b) noexcept
     {
-        return a.Width == b.Width && a.Height == b.Height;
+        return a.m_Width == b.m_Width && a.m_Height == b.m_Height;
     }
+private:
+    unsigned m_Width;
+    unsigned m_Height;
 };
 
 class Point2
 {
 public:
 
-    int X{0}, Y{0};
+    constexpr Point2(const int x, const int y)
+        : m_X(x), m_Y(y)
+    {
+    }
+
+    constexpr int GetX() const { return m_X; }
+    constexpr int GetY() const { return m_Y; }
 
     constexpr friend bool operator==(const Point2& a, const Point2& b) noexcept
     {
-        return a.X == b.X && a.Y == b.Y;
+        return a.m_X == b.m_X && a.m_Y == b.m_Y;
     }
+
+private:
+    int m_X{0}, m_Y{0};
 };
 
 class Rect
@@ -1122,7 +1143,7 @@ public:
     }
 
     explicit Rect(const Dimension2& dim) noexcept
-    : Rect(RectParams{.X = 0, .Y = 0, .Width = dim.Width, .Height = dim.Height })
+    : Rect(RectParams{.X = 0, .Y = 0, .Width = dim.GetWidth(), .Height = dim.GetHeight() })
     {
     }
 
@@ -1130,8 +1151,10 @@ public:
     int GetY() const { return m_Y; }
     unsigned GetWidth() const { return m_Width; }
     unsigned GetHeight() const { return m_Height; }
+    int GetRight() const { return m_X + static_cast<int>(m_Width); }
+    int GetBottom() const { return m_Y + static_cast<int>(m_Height); }
 
-    constexpr Dimension2 GetDimensions() const { return Dimension2{.Width = m_Width, .Height = m_Height }; }
+    constexpr Dimension2 GetDimensions() const { return Dimension2(m_Width, m_Height); }
 
     constexpr float GetAspectRatio() const
     {
@@ -1155,12 +1178,22 @@ private:
 
     static constexpr RectParams MakeRectParams(const Point2& p0, const Point2& p1) noexcept
     {
-        const int x = std::min(p0.X, p1.X);
-        const int y = std::min(p0.Y, p1.Y);
-        const unsigned width = static_cast<unsigned>(std::abs(p1.X - p0.X));
-        const unsigned height = static_cast<unsigned>(std::abs(p1.Y - p0.Y));
+        const int x = std::min(p0.GetX(), p1.GetX());
+        const int y = std::min(p0.GetY(), p1.GetY());
+        const int right = std::max(p0.GetX(), p1.GetX());
+        const int bottom = std::max(p0.GetY(), p1.GetY());
 
-        return RectParams{.X = x, .Y = y, .Width = width, .Height = height };
+        const unsigned width = static_cast<unsigned>(right) - static_cast<unsigned>(x);
+        const unsigned height = static_cast<unsigned>(bottom) - static_cast<unsigned>(y);
+
+    #ifndef NDEBUG
+        constexpr unsigned kMaxDimension = static_cast<unsigned>(std::numeric_limits<int>::max());
+    #endif
+
+        MLG_ASSERT(width <= kMaxDimension, "Width exceeds the int range");
+        MLG_ASSERT(height <= kMaxDimension, "Height exceeds the int range");
+
+        return RectParams{ .X = x, .Y = y, .Width = width, .Height = height };
     }
 
     int m_X{0}, m_Y{0};

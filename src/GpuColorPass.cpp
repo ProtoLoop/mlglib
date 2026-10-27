@@ -430,8 +430,7 @@ GpuColorPass::SetOutputs(const Outputs& outputs)
 }
 
 Result<>
-GpuColorPass::Execute(const CameraView& cameraView,
-    std::span<MeshInstance> meshes,
+GpuColorPass::Execute(std::span<MeshInstance> meshes,
     const std::span<const GpuMaterialProperties> materialProperties)
 {
     const wgpu::Device gpuDevice = m_GpuHelper->GetDevice();
@@ -439,7 +438,7 @@ GpuColorPass::Execute(const CameraView& cameraView,
     const wgpu::CommandEncoder cmdEncoder = gpuDevice.CreateCommandEncoder();
     MLG_CHECK(cmdEncoder, "Failed to create command encoder");
 
-    MLG_CHECK(Execute(cmdEncoder, cameraView, meshes, materialProperties));
+    MLG_CHECK(Execute(cmdEncoder, meshes, materialProperties));
 
     const wgpu::CommandBuffer cmdBuf = cmdEncoder.Finish(nullptr);
     MLG_CHECK(cmdBuf, "Failed to finish command buffer");
@@ -454,7 +453,6 @@ GpuColorPass::Execute(const CameraView& cameraView,
 
 Result<>
 GpuColorPass::Execute(const wgpu::CommandEncoder& cmdEncoder,
-    const CameraView& cameraView,
     std::span<MeshInstance> meshes,
     const std::span<const GpuMaterialProperties> materialProperties)
 {
@@ -465,19 +463,12 @@ GpuColorPass::Execute(const wgpu::CommandEncoder& cmdEncoder,
 
     const wgpu::RenderPassEncoder renderPass = std::move(*renderPassResult);
 
-    const Viewport& viewport = cameraView.GetCamera().GetViewport();
+    const uint32_t w = m_Outputs->RenderTarget->GetWidth();
+    const uint32_t h = m_Outputs->RenderTarget->GetHeight();
 
-    renderPass.SetViewport(static_cast<float>(viewport.GetX()),
-        static_cast<float>(viewport.GetY()),
-        static_cast<float>(viewport.GetWidth()),
-        static_cast<float>(viewport.GetHeight()),
-        viewport.GetMinDepth(),
-        viewport.GetMaxDepth());
+    renderPass.SetViewport(0, 0, static_cast<float>(w), static_cast<float>(h), 0, 1);
 
-    renderPass.SetScissorRect(viewport.GetX(),
-        viewport.GetY(),
-        viewport.GetWidth(),
-        viewport.GetHeight());
+    renderPass.SetScissorRect(0, 0, w, h);
 
     // Sort the meshes based on material properties to minimize state changes.
     std::ranges::sort(meshes, {}, &MeshInstance::GetSortKey);

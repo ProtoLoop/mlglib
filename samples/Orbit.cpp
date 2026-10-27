@@ -22,14 +22,6 @@
 #include <thread>
 #include <vector>
 
-
-// TODO
-// gravity-only energy drift
-// energy removed by restitution
-// energy removed by resting contacts
-// energy introduced by positional correction
-// total numerical error
-
 namespace
 {
 constexpr const char* kAppName = "Orbit";
@@ -599,7 +591,7 @@ MainLoop()
 
     CameraActor cameraActor(system->GetInputMapper());
     cameraActor.SetTransform(TrTransformf{ .T{ 0, 0, -kInitialCameraDistance } });
-    cameraActor.SetViewport(Viewport(gpuHelper.GetScreenDimensions()));
+    cameraActor.SetAspectRatio(gpuHelper.GetScreenDimensions().GetAspectRatio());
 
     bool pauseSim = false;
 
@@ -714,11 +706,9 @@ MainLoop()
 
             const Rect& viewPanelRect = devUi.GetViewPanelRect();
 
-            const Viewport viewport(viewPanelRect.GetDimensions());
-            cameraActor.SetViewport(viewport);
+            cameraActor.SetAspectRatio(viewPanelRect.GetDimensions().GetAspectRatio());
 
-            const CameraView cameraView(cameraActor.GetCamera(), cameraActor.GetTransform());
-            MLG_CHECK(view.Render(cameraView));
+            MLG_CHECK(view.Render(cameraActor.GetCamera(), viewPanelRect.GetDimensions()));
             MLG_CHECK(view.Composite(*target, viewPanelRect));
         }
 

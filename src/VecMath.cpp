@@ -1,4 +1,5 @@
 #include "VecMath.h"
+#include <limits>
 
 template<typename T>
 const UnitQuat<T> UnitQuat<T>::Identity{ T{ 0 }, T{ 0 }, T{ 0 }, T{ 1 } };
@@ -365,15 +366,25 @@ Rect::Rect(const RectParams& params) noexcept
     {
         m_Height = 1;
     }
+
+#ifndef NDEBUG
+    constexpr int kMax = std::numeric_limits<int>::max();
+#endif
+
+    MLG_ASSERT(m_Width <= static_cast<unsigned>(kMax) && m_X <= kMax - static_cast<int>(m_Width),
+        "Right edge exceeds the int range");
+
+    MLG_ASSERT(m_Height <= static_cast<unsigned>(kMax) && m_Y <= kMax - static_cast<int>(m_Height),
+        "Bottom edge exceeds the int range");
 }
 
 bool
 Rect::Contains(const Point2& point) const noexcept
 {
-    return point.X >= m_X
-        && point.X < m_X + static_cast<int>(m_Width)
-        && point.Y >= m_Y
-        && point.Y < m_Y + static_cast<int>(m_Height);
+    return point.GetX() >= m_X
+        && point.GetX() < m_X + static_cast<int>(m_Width)
+        && point.GetY() >= m_Y
+        && point.GetY() < m_Y + static_cast<int>(m_Height);
 }
 
 bool

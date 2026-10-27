@@ -52,7 +52,7 @@ Result<SceneDef>
 CreateScene()
 {
     MeshDef meshDef = ShapeDefs::Box({ .Width = 1.0f, .Height = 1.0f, .Depth = 1.0f });
-    //MeshDef meshDef = ShapeDefs::Ball({ .Radius = 1.0f });
+    // MeshDef meshDef = ShapeDefs::Ball({ .Radius = 1.0f });
 
     meshDef.MaterialDef = MaterialDef //
         {
@@ -127,11 +127,6 @@ private:
 
     std::unique_ptr<Level> m_Level;
 
-    Viewport m_Viewport //
-        {
-            { .x = 0, .y = 0, .width = 1, .height = 1, .minDepth = 0, .maxDepth = 1 },
-        };
-
     std::optional<CameraActor> m_CameraActor;
     Timer m_FrameTimer;
     bool m_IsCameraActorActive{ false };
@@ -204,7 +199,7 @@ TranslucentApp::OnUpdate()
                     {
                         m_Stage = Stage::Running;
                     }
-                    
+
                     m_LevelCreateTask.reset();
                 }
             }
@@ -259,11 +254,12 @@ TranslucentApp::Render()
 
     const GpuHelper& gpuHelper = m_System->GetGpuHelper();
 
-    m_Viewport = Viewport(gpuHelper.GetScreenDimensions());
-    m_CameraActor->SetViewport(m_Viewport);
+    const Dimension2 screenDims = gpuHelper.GetScreenDimensions();
 
-    const CameraView cameraView(m_CameraActor->GetCamera(), m_CameraActor->GetTransform());
-    MLG_CHECK(m_Level->GetView().Render(cameraView), "Failed to render view");
+    m_CameraActor->SetAspectRatio(screenDims.GetAspectRatio());
+
+    MLG_CHECK(m_Level->GetView().Render(m_CameraActor->GetCamera(), screenDims),
+        "Failed to render view");
 
     auto targetResult = gpuHelper.GetSwapChainTexture();
     MLG_CHECK(targetResult, "Failed to get swap chain texture");

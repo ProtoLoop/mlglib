@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Camera.h"
 #include "CoopTask.h"
 #include "GpuTypes.h"
 #include "ShaderFetcher.h"
@@ -90,8 +89,7 @@ public:
     /// This variant of Execute creates a command encoder that's owned and
     /// submitted to the GPU before returning.
     /// Note that the meshes span is non-const to allow sorting for optimal rendering order.
-    Result<> Execute(const CameraView& cameraView,
-        std::span<MeshInstance> meshes,
+    Result<> Execute(std::span<MeshInstance> meshes,
         const std::span<const GpuMaterialProperties> materialProperties);
 
     /// Executes the pass using the supplied inputs and outputs.
@@ -99,7 +97,6 @@ public:
     /// The caller is responsible for submitting the command encoder to the GPU.
     /// Note that the meshes span is non-const to allow sorting for optimal rendering order.
     Result<> Execute(const wgpu::CommandEncoder& cmdEncoder,
-        const CameraView& cameraView,
         std::span<MeshInstance> meshes,
         const std::span<const GpuMaterialProperties> materialProperties);
 

@@ -11,6 +11,7 @@
 #include "System.h"
 #include "TextureFetcher.h"
 
+
 namespace
 {
 
@@ -185,9 +186,14 @@ View::Create(System& system,
 }
 
 Result<>
-View::Render(const CameraView& cameraView)
+View::Render(const Camera& camera, const Dimension2& dstExtents)
 {
     MLG_SCOPED_TIMER("View.Render");
+
+    MLG_CHECKV(dstExtents.GetWidth() > 0 && dstExtents.GetHeight() > 0,
+        "Invalid destination extents: {},{}",
+        dstExtents.GetWidth(),
+        dstExtents.GetHeight());
 
     MLG_CHECK(SyncToGpu());
 
@@ -197,16 +203,14 @@ View::Render(const CameraView& cameraView)
     const wgpu::CommandEncoder cmdEncoder = gpuDevice.CreateCommandEncoder(&encoderDesc);
     MLG_CHECK(cmdEncoder, "Failed to create command encoder");
 
-    MLG_CHECK(TransformNodes(gpuDevice, cmdEncoder, cameraView));
-
-    const Viewport& viewport = cameraView.GetCamera().GetViewport();
+    MLG_CHECK(TransformNodes(gpuDevice, cmdEncoder, camera));
 
     if(!m_ColorPassOutputs
-        || m_ColorPassOutputs->RenderTarget->GetWidth() != viewport.GetWidth()
-        || m_ColorPassOutputs->RenderTarget->GetHeight() != viewport.GetHeight())
+        || m_ColorPassOutputs->RenderTarget->GetWidth() != dstExtents.GetWidth()
+        || m_ColorPassOutputs->RenderTarget->GetHeight() != dstExtents.GetHeight())
     {
         auto colorPassOutputs =
-            CreateColorPassTarget(*m_GpuHelper, viewport.GetWidth(), viewport.GetHeight());
+            CreateColorPassTarget(*m_GpuHelper, dstExtents.GetWidth(), dstExtents.GetHeight());
         MLG_CHECK(colorPassOutputs);
 
         m_ColorPassOutputs = std::move(*colorPassOutputs);
@@ -225,9 +229,9 @@ View::Render(const CameraView& cameraView)
     MLG_CHECK(m_ColorPass->SetInputs(colorPassInputs));
     MLG_CHECK(m_ColorPass->SetOutputs(*m_ColorPassOutputs));
 
-    CullMeshes(cameraView);
+    CullMeshes(camera);
 
-    MLG_CHECK(m_ColorPass->Execute(cmdEncoder, cameraView, m_CulledMeshes, m_MaterialProperties));
+    MLG_CHECK(m_ColorPass->Execute(cmdEncoder, m_CulledMeshes, m_MaterialProperties));
 
     const wgpu::CommandBuffer cmdBuf = cmdEncoder.Finish(nullptr);
     MLG_CHECK(cmdBuf, "Failed to finish command buffer");
@@ -274,16 +278,16 @@ View::Composite(const GpuRenderTarget& target, const Rect& dstRect)
 // private:
 
 void
-View::CullMeshes(const CameraView& cameraView)
+View::CullMeshes(const Camera& camera)
 {
     static PerfCounter pcTotalMeshes({ .Name = "View.Meshes.Total" });
     static PerfCounter pcVisibleMeshes({ .Name = "View.Meshes.Visible" });
 
     m_CulledMeshes.clear();
 
-    const Vec3f cameraPos = cameraView.GetWorldSpaceTransform().T;
-    const Vec3f cameraForward = cameraView.GetWorldSpaceTransform().R * Vec3f::ZAXIS();
-    const Frustum frustum(cameraView);
+    const Vec3f cameraPos = camera.GetWorldSpaceTransform().T;
+    const Vec3f cameraForward = camera.GetWorldSpaceTransform().R * Vec3f::ZAXIS();
+    const Frustum frustum(camera);
 
     const ModelCuller modelCuller(m_Scene->GetAllModelNodes(), frustum);
     for(const ModelCuller::CulledModel& culledModel : modelCuller)
@@ -334,15 +338,14 @@ View::SyncToGpu()
 }
 
 Result<>
-View::TransformNodes(const wgpu::Device& gpuDevice,
-    const wgpu::CommandEncoder& cmdEncoder,
-    const CameraView& cameraView)
+View::TransformNodes(
+    const wgpu::Device& gpuDevice, const wgpu::CommandEncoder& cmdEncoder, const Camera& camera)
 {
     const ShaderInterop::CameraParams cameraParams //
         {
-            .View = cameraView.GetViewTransform().ToMatrix(),
-            .Projection = cameraView.GetProjectionMatrix(),
-            .ViewProj = cameraView.GetViewProj(),
+            .View = camera.GetViewTransform().ToMatrix(),
+            .Projection = camera.GetProjection().GetMatrix(),
+            .ViewProj = camera.GetViewProj(),
         };
 
     gpuDevice.GetQueue().WriteBuffer(m_CameraParamsBuffer.GetGpuBuffer(),
@@ -468,7 +471,7 @@ View::CreateTask::OnStart()
 
     // If one task fails to start, it will not be added to the task batch.
     // But we still have to let the tasks that did start run to completion.
-    
+
     InplaceVector<ICoopTask<>*, 4> tasks;
 
     if(!m_TextureFetcher->Start())

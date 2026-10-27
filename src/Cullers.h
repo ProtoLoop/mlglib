@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Camera.h"
+#include "Frustum.h"
 
 #include <cstddef>
 #include <iterator>

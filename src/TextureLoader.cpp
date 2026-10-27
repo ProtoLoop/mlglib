@@ -1,4 +1,3 @@
-#include <variant>
 #define MLG_LOGGER_NAME "TLOD"
 
 #include "Defer.h"

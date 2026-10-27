@@ -16,7 +16,6 @@
 #include <string>
 #include <thread>
 
-
 namespace
 {
 constexpr const char* kAppName = "Viewer";
@@ -51,9 +50,8 @@ RenderGui()
 
     for(const auto* counterStat : sortedCounters)
     {
-        const auto text = InplaceString<>::Format("{}: {:.3f} ms",
-            counterStat->GetName(),
-            counterStat->GetEMA());
+        const auto text =
+            InplaceString<>::Format("{}: {:.3f} ms", counterStat->GetName(), counterStat->GetEMA());
         ImGui::TextUnformatted(text.c_str());
     }
 
@@ -99,7 +97,7 @@ LoadLevel(System& system, const FilePath& path)
 
         createTask = std::move(*createTaskResult);
     }
-    
+
     if(ext == ".bin")
     {
         auto createTaskResult = Level::CreateFromBundle(system, path);
@@ -117,7 +115,7 @@ LoadLevel(System& system, const FilePath& path)
     return createTask->Take();
 }
 
-//constexpr const char* SPONZA_PATH = "main_sponza/NewSponza_Main_glTF_003.gltf";
+// constexpr const char* SPONZA_PATH = "main_sponza/NewSponza_Main_glTF_003.gltf";
 constexpr const char* SPONZA_PATH = "main_sponza_bin/NewSponza_Main_glTF_003.bin";
 
 Result<>
@@ -153,11 +151,12 @@ MainLoop()
 
     const GpuHelper& gpuHelper = system->GetGpuHelper();
 
-    Dimension2 screenDimensions = gpuHelper.GetScreenDimensions();
+    Dimension2 screenDims = gpuHelper.GetScreenDimensions();
 
     CameraActor cameraActor(system->GetInputMapper());
-    cameraActor.SetTransform(TrTransformf{ .T{ 0, kDefaultCameraHeight, 0 }, .R{ cameraYaw, Vec3f::YAXIS() } });
-    cameraActor.SetViewport(Viewport(screenDimensions));
+    cameraActor.SetTransform(
+        TrTransformf{ .T{ 0, kDefaultCameraHeight, 0 }, .R{ cameraYaw, Vec3f::YAXIS() } });
+    cameraActor.SetAspectRatio(screenDims.GetAspectRatio());
 
     constexpr ActionMapping actionMappings[] //
         {
@@ -219,12 +218,12 @@ MainLoop()
             system->SetMouseCaptured(false);
         }
 
-        const Dimension2 curScreenDimensions = gpuHelper.GetScreenDimensions();
+        const Dimension2 curScreenDims = gpuHelper.GetScreenDimensions();
 
-        if(curScreenDimensions != screenDimensions)
+        if(curScreenDims != screenDims)
         {
-            cameraActor.SetViewport(Viewport(curScreenDimensions));
-            screenDimensions = curScreenDimensions;
+            cameraActor.SetAspectRatio(curScreenDims.GetAspectRatio());
+            screenDims = curScreenDims;
         }
 
         if(isCameraActorActive)
@@ -235,8 +234,7 @@ MainLoop()
         auto target = gpuHelper.GetSwapChainTexture();
         MLG_CHECKV(target, "Failed to get swap chain texture");
 
-        const CameraView cameraView(cameraActor.GetCamera(), cameraActor.GetTransform());
-        MLG_CHECK(view.Render(cameraView));
+        MLG_CHECK(view.Render(cameraActor.GetCamera(), curScreenDims));
         MLG_CHECK(view.Composite(*target));
 
         const ImGuiRenderer& imGuiRenderer = system->GetImGuiRenderer();

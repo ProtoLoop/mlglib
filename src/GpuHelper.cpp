@@ -843,11 +843,7 @@ GpuHelper::GetScreenDimensions() const
     {
         MLG_ERROR("Failed to get window size: {}", SDL_GetError());
     }
-    return Dimension2 //
-        {
-            .Width = static_cast<unsigned>(width),
-            .Height = static_cast<unsigned>(height),
-        };
+    return Dimension2(static_cast<unsigned>(width), static_cast<unsigned>(height));
 }
 
 Result<GpuRenderTarget>
@@ -890,8 +886,8 @@ GpuHelper::GetSwapChainTexture() const
     auto surfaceFormat = ConfigureSurface(m_Adapter,
         GetDevice(),
         m_Surface,
-        GetScreenDimensions().Width,
-        GetScreenDimensions().Height);
+        GetScreenDimensions().GetWidth(),
+        GetScreenDimensions().GetHeight());
 
     MLG_CHECK(surfaceFormat);
 
