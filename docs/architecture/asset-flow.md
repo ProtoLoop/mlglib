@@ -35,7 +35,7 @@ device.
 - `MaterialDef` describes surface properties and a texture path.
 - `ModelDef` groups meshes under a name.
 - Nodes describe transforms and hierarchy, refer to models by name, and can
-  include physics definitions on roots.
+  include physics and camera definitions on roots.
 
 [`GltfLoader`](../../src/GltfLoader.cpp) produces these definitions from glTF.
 A glTF mesh becomes a `ModelDef`, and each primitive becomes a `MeshDef`.
@@ -53,6 +53,9 @@ packs geometry and resource records into one buffer, shares duplicate strings,
 texture paths, and materials, resolves model names to indices, computes bounds,
 and flattens the node hierarchy.
 
+The builder records cameras attached to root nodes. If no camera-bearing root
+is named `DefaultCamera`, it adds one with an identity transform.
+
 The bundle owns its buffer. Its accessors return read-only views that remain
 valid while the bundle exists. Intermediate definitions can be discarded after
 building it.
@@ -61,7 +64,11 @@ building it.
 
 [`Level::CreateTask`](../../src/Level.cpp) accepts scene definitions, imports
 glTF, or loads cooked resource bundles. [`Scene`](../../src/Scene.cpp) creates
-runtime nodes and physics, and [`View`](../../src/View.cpp) creates GPU resources.
+runtime nodes, physics bodies, and cameras. Cameras are looked up by their owning
+node's name. Camera controllers set target local transforms, which
+`Scene::Update()` applies before updating world transforms.
+[`View`](../../src/View.cpp) creates GPU resources and renders using the camera
+transform and projection settings supplied by the caller.
 
 The [Cook tool](../../tools/Cook/Cook.cpp) writes resource bundles and separate
 `.bc7.ktx2`, `.astc.ktx2`, and uncompressed `.rgba.ktx2` texture files with mipmaps.

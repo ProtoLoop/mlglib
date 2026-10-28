@@ -445,16 +445,12 @@ Scene::Update(const float timeStep)
         const b3BodyId bodyId = GetBodyId(physicsNode.m_RigidBodyId);
         const b3Pos pos = b3Body_GetPosition(bodyId);
         const b3Quat rot = b3Body_GetRotation(bodyId);
-        const b3Vec3 vel = b3Body_GetLinearVelocity(bodyId);
-        const b3Vec3 angVel = b3Body_GetAngularVelocity(bodyId);
 
         // Rigid bodies can only be attached to root nodes.
         // Updating the local transform of a root node is equivalent to updating its world
         // transform.
         node->m_LocalTransform.T = Vec3f{ pos.x, pos.y, pos.z };
         node->m_LocalTransform.R = UnitQuatf{ rot.v.x, rot.v.y, rot.v.z, rot.s };
-        node->m_LinearVelocity = Vec3f{ vel.x, vel.y, vel.z };
-        node->m_AngularVelocity = Vec3f{ angVel.x, angVel.y, angVel.z };
     }
 
     for(const CameraNode& cameraNode : m_CameraNodes)

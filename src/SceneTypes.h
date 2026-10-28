@@ -293,7 +293,7 @@ private:
     uint64_t m_SortKey{ 0 };
 };
 
-/// Represents a node within the scene graph, including its local and world transforms, velocities,
+/// Represents a node within the scene graph, including its local and world transforms,
 /// and hierarchical relationships.
 class SceneNode
 {
@@ -320,8 +320,6 @@ public:
     const NameType& GetName() const { return m_Name; }
     const TrsTransformf& GetLocalTransform() const { return m_LocalTransform; }
     const Mat44f& GetWorldTransform() const { return m_WorldTransform; }
-    const Vec3f& GetLinearVelocity() const { return m_LinearVelocity; }
-    const Vec3f& GetAngularVelocity() const { return m_AngularVelocity; }
     const SceneNode* GetParent() const { return m_Parent; }
 
 private:
@@ -329,8 +327,6 @@ private:
 
     NameType m_Name;
     TrsTransformf m_LocalTransform;
-    Vec3f m_LinearVelocity{ 0 };
-    Vec3f m_AngularVelocity{ 0 };
     Mat44f m_WorldTransform{ 1 };
     const SceneNode* m_Parent{ nullptr };
     std::span<SceneNode> m_Children;

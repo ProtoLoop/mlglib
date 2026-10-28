@@ -68,7 +68,9 @@ PhysicsNode::GetRotation() const
 Vec3f
 PhysicsNode::GetLinearVelocity() const
 {
-    return m_Node->GetLinearVelocity();
+    const b3BodyId bodyId = GetBodyId(m_RigidBodyId);
+    const b3Vec3 vel = b3Body_GetLinearVelocity(bodyId);
+    return Vec3f{ vel.x, vel.y, vel.z };
 }
 
 void
@@ -87,7 +89,9 @@ PhysicsNode::SetLinearVelocity(const Vec3f& velocity)
 Vec3f
 PhysicsNode::GetAngularVelocity() const
 {
-    return m_Node->GetAngularVelocity();
+    const b3BodyId bodyId = GetBodyId(m_RigidBodyId);
+    const b3Vec3 angVel = b3Body_GetAngularVelocity(bodyId);
+    return Vec3f{ angVel.x, angVel.y, angVel.z };
 }
 
 void
