@@ -42,6 +42,8 @@ public:
 
 private:
     Scene(BoundedVector<SceneNode>&& nodes,
+        BoundedVector<RootSceneNode>&& rootNodes,
+        BoundedVector<ChildSceneNode>&& childNodes,
         BoundedVector<char>&& stringStorage,
         BoundedVector<PhysicsNode>&& physicsNodes,
         BoundedVector<ModelNode>&& modelNodes,
@@ -49,11 +51,18 @@ private:
         BoundedVector<Mesh>&& meshes,
         const WorldIdentifier worldId);
 
-    SceneNode* GetMutableNode(const SceneNode& node);
+    /// Returns a mutable pointer to the scene node corresponding to the node reference, or
+    /// nullptr if the node is not part of the scene.
+    SceneNode* GetMutableSceneNode(const SceneNode& node);
+    SceneNode* GetMutableSceneNode(const PhysicsNode& node);
+    SceneNode* GetMutableSceneNode(const ModelNode& node);
+    SceneNode* GetMutableSceneNode(const CameraNode& node);
 
     void UpdateWorldTransforms();
 
     BoundedVector<SceneNode> m_Nodes;
+    BoundedVector<RootSceneNode> m_RootNodes;
+    BoundedVector<ChildSceneNode> m_ChildNodes;
     BoundedVector<char> m_StringStorage;
     BoundedVector<PhysicsNode> m_PhysicsNodes;
     BoundedVector<ModelNode> m_ModelNodes;

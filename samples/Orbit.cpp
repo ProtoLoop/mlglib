@@ -53,14 +53,39 @@ LoadLevel(System& system)
     [[maybe_unused]] constexpr float kTorusTubeRadius = 1.0f;
     [[maybe_unused]] constexpr float kTorusSmoothness = 1.0f;
 
-    // Fixed seed for reproducibility
-    constexpr unsigned kRngSeed = 12345;
-    std::mt19937 gen(kRngSeed);
-    std::uniform_real_distribution<float> dis(-1, 1);
-
     constexpr float kDispersionRadius = 20;
     constexpr float kMaxBodyRadius = 1.0f;
     constexpr float kMinBodyRadius = 0.1f;
+    constexpr size_t kNumModels = 10;
+
+    // Fixed seed for reproducibility
+    constexpr unsigned kRngSeed = 12345;
+    std::mt19937 gen(kRngSeed);
+    std::uniform_real_distribution<float> disF(-1, 1);
+    std::uniform_int_distribution<size_t> disI(0, kNumModels - 1);
+
+    // Create models of varying sizes.
+    struct Model
+    {
+        float Radius{};
+        ModelDef Def;
+    };
+
+    Model models[kNumModels];
+    float modelRadius = kMinBodyRadius;
+    for(size_t i = 0; i < kNumModels;
+        ++i, modelRadius += (kMaxBodyRadius - kMinBodyRadius) / kNumModels)
+    {
+        models[i] = Model //
+            { .Radius = modelRadius,
+                .Def = {
+                    .Name{ SceneDefs::NameString::Format("Shape{}", i) },
+                    .MeshDefs //
+                    {
+                        ShapeDefs::Ball({ .Radius = modelRadius }),
+                    },
+                } };
+    }
 
 #ifndef NDEBUG
     // Reduce the number of bodies in debug builds to improve performance.
@@ -73,30 +98,29 @@ LoadLevel(System& system)
         .TubeRadius = kTorusTubeRadius,
         .Smoothness = kTorusSmoothness });
 
-    const MeshDef box =
-        ShapeDefs::Box({ .Width = kBoxExtent, .Height = kBoxExtent, .Depth = kBoxExtent });
-
-    const MeshDef ball = ShapeDefs::Ball({ .Radius = kBallRadius });
-
     std::vector<RootNodeDef> nodeDefs;
     nodeDefs.reserve(kNumBodies);
+
     for(size_t i = 0; i < kNumBodies; ++i)
     {
-        const float radius =
-            kMinBodyRadius + (std::abs(dis(gen)) * (kMaxBodyRadius - kMinBodyRadius));
+        // Select a random model.
+        const size_t modelIndex = disI(gen);
+        const Model& model = models[modelIndex];
+
+        const float radius = model.Radius;
         const float mass = radius;
         const Vec3f position //
             {
-                dis(gen) * kDispersionRadius,
-                dis(gen) * kDispersionRadius,
-                dis(gen) * kDispersionRadius,
+                disF(gen) * kDispersionRadius,
+                disF(gen) * kDispersionRadius,
+                disF(gen) * kDispersionRadius,
             };
 
         RootNodeDef nodeDef //
             {
-                .Name{ std::format("Body{}", i) },
-                .Transform{ .T{ position }, .S{ radius } },
-                .Model = ModelRef{ .Name{ "Shape" } },
+                .Name{ SceneDefs::NameString::Format("Body{}", i) },
+                .Transform{ .T{ position } },
+                .Model = ModelRef{ .Name{ model.Def.Name } },
                 .Body =
                     RigidBodyDef //
                 {
@@ -126,20 +150,16 @@ LoadLevel(System& system)
         nodeDefs.push_back(std::move(nodeDef));
     }
 
+    std::vector<ModelDef> modelDefs;
+    modelDefs.reserve(kNumModels);
+    for(const Model& model : models)
+    {
+        modelDefs.push_back(model.Def);
+    }
+
     SceneDef sceneDef //
         {
-            .ModelDefs //
-            {
-                {
-                    .Name{ "Shape" },
-                    .MeshDefs //
-                    {
-                        ball,
-                        // box,
-                        // torus,
-                    },
-                },
-            },
+            .ModelDefs = std::move(modelDefs),
             .NodeDefs = std::move(nodeDefs),
         };
 

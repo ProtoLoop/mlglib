@@ -934,7 +934,7 @@ CollectSceneNodes(const std::span<const FlatNodeDef> flatNodeDefs,
                 const auto& stringRsrc = it->second;
                 const size_t childCount = nodeDef->Children.size();
 
-                const SceneNodeResource sceneNode //
+                SceneNodeResource sceneNode //
                     {
                         .Name = stringRsrc,
                         .ParentIndex = flatNodeDef.ParentIndex,
@@ -942,8 +942,16 @@ CollectSceneNodes(const std::span<const FlatNodeDef> flatNodeDefs,
                         .ChildCount = static_cast<IndexType>(childCount),
                         .LocalPos = nodeDef->Transform.T,
                         .LocalRot = nodeDef->Transform.R.ToVector(),
-                        .LocalScale = nodeDef->Transform.S,
                     };
+
+                if constexpr (std::is_same_v<std::decay_t<decltype(*nodeDef)>, ChildNodeDef>)
+                {
+                    sceneNode.LocalScale = nodeDef->Transform.S;
+                }
+                else
+                {
+                    sceneNode.LocalScale = Vec3f{ 1, 1, 1 };
+                }
 
                 // At this point it's been confirmed that flatNodeDefs does not
                 // exceed the max cout so no bounds checking needed.

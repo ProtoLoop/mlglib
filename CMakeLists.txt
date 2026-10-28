@@ -399,6 +399,7 @@ set(SSG_SOURCES
   src/Level.cpp
   src/Log.cpp
   src/PerfMetrics.cpp
+  src/PhysicsTypes.cpp
   src/ResourceBundle.cpp
   src/Scene.cpp
   src/SceneTypes.cpp
@@ -448,7 +449,6 @@ set(SSG_HEADERS
   src/SafeInteger.h
   src/Scene.h
   src/SceneTypes.h
-  src/SemanticIdentifier.h
   src/shaders/ShaderInterop.h
   src/ShaderFetcher.h
   src/ShapeDefs.h

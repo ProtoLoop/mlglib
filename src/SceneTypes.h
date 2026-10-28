@@ -171,7 +171,7 @@ struct ChildNodeDef final
 struct RootNodeDef final
 {
     SceneDefs::NameString Name;
-    TrsTransformf Transform;
+    TrTransformf Transform;
     std::vector<ChildNodeDef> Children;
     std::optional<ModelRef> Model;
     std::optional<RigidBodyDef> Body;
@@ -301,10 +301,24 @@ class SceneNode
 {
 public:
     SceneNode(
-        const std::string_view name, const TrsTransformf& localTransform, const SceneNode* parent)
+        const std::string_view name, const TrsTransformf& localTransform, const SceneNode& parent)
         : m_Name(name),
           m_LocalTransform(localTransform),
-          m_Parent(parent)
+          m_Parent(&parent)
+    {
+    }
+
+    SceneNode(
+        const std::string_view name, const TrTransformf& localTransform, const SceneNode& parent)
+        : m_Name(name),
+          m_LocalTransform(localTransform.ToTrsTransform()),
+          m_Parent(&parent)
+    {
+    }
+
+    SceneNode(const std::string_view name, const TrTransformf& localTransform)
+        : m_Name(name),
+          m_LocalTransform(localTransform.ToTrsTransform())
     {
     }
 
@@ -317,7 +331,7 @@ public:
 
     std::string_view GetName() const { return m_Name; }
     const TrsTransformf& GetLocalTransform() const { return m_LocalTransform; }
-    const Mat44f& GetWorldTransform() const { return m_WorldTransform; }
+    const Mat44f& GetWsMatrix() const { return m_WsMatrix; }
     const SceneNode* GetParent() const { return m_Parent; }
 
 private:
@@ -325,17 +339,100 @@ private:
 
     std::string_view m_Name;
     TrsTransformf m_LocalTransform;
-    Mat44f m_WorldTransform{ 1 };
+    Mat44f m_WsMatrix{ 1 };
     const SceneNode* m_Parent{ nullptr };
     std::span<SceneNode> m_Children;
 };
 
+/// Represents a root node within the scene graph, which must not have a parent.
+/// Root nodes also do not have scale in their transforms.
+class RootSceneNode
+{
+    // Used to give ctor access only to friend classes.
+    struct PassKey
+    {
+    private:
+        friend class Scene;
+        PassKey() = default;
+    };
+
+public:
+    RootSceneNode() = delete;
+    ~RootSceneNode() = default;
+    RootSceneNode(const RootSceneNode&) = delete;
+    RootSceneNode& operator=(const RootSceneNode&) = delete;
+    RootSceneNode(RootSceneNode&&) = delete;
+    RootSceneNode& operator=(RootSceneNode&&) = delete;
+
+    explicit RootSceneNode(SceneNode& sceneNode, const PassKey)
+        : m_SceneNode(&sceneNode)
+    {
+        MLG_ASSERT(sceneNode.GetParent() == nullptr, "RootSceneNode must not have a parent");
+    }
+
+    const SceneNode& GetSceneNode() const { return *m_SceneNode; }
+
+    std::string_view GetName() const { return m_SceneNode->GetName(); }
+
+    TrTransformf GetLocalTransform() const
+    {
+        return m_SceneNode->GetLocalTransform().ToTrTransform();
+    }
+
+    const Mat44f& GetWsMatrix() const { return m_SceneNode->GetWsMatrix(); }
+
+private:
+    friend class Scene;
+
+    SceneNode* m_SceneNode{ nullptr };
+};
+
+/// Represents a child node within the scene graph, which must have a valid parent.
+/// Child nodes can have scale in their transforms.
+class ChildSceneNode
+{
+    // Used to give ctor access only to friend classes.
+    struct PassKey
+    {
+    private:
+        friend class Scene;
+        PassKey() = default;
+    };
+
+public:
+    ChildSceneNode() = delete;
+    ~ChildSceneNode() = default;
+    ChildSceneNode(const ChildSceneNode&) = delete;
+    ChildSceneNode& operator=(const ChildSceneNode&) = delete;
+    ChildSceneNode(ChildSceneNode&&) = delete;
+    ChildSceneNode& operator=(ChildSceneNode&&) = delete;
+
+    explicit ChildSceneNode(SceneNode& sceneNode, const PassKey)
+        : m_SceneNode(&sceneNode)
+    {
+        MLG_ASSERT(sceneNode.GetParent() != nullptr, "ChildSceneNode must have a valid parent");
+    }
+
+    const SceneNode& GetSceneNode() const { return *m_SceneNode; }
+
+    std::string_view GetName() const { return m_SceneNode->GetName(); }
+    const TrsTransformf& GetLocalTransform() const { return m_SceneNode->GetLocalTransform(); }
+    const Mat44f& GetWsMatrix() const { return m_SceneNode->GetWsMatrix(); }
+    const SceneNode* GetParent() const { return m_SceneNode->GetParent(); }
+
+private:
+    friend class Scene;
+
+    SceneNode* m_SceneNode{ nullptr };
+};
+
 /// Represents a node in the scene to which physics can be applied.
-/// All PhysicsNodes are associated with a SceneNode.
+/// All PhysicsNodes are associated with a RootNode.
+/// PhysicsNodes can only appear at the root of the scene graph.
 class PhysicsNode
 {
 public:
-    PhysicsNode(const SceneNode& node, const RigidBodyIdentifier rigidBodyId);
+    PhysicsNode(const RootSceneNode& rootNode, const RigidBodyIdentifier rigidBodyId);
 
     PhysicsNode() = delete;
     ~PhysicsNode() = default;
@@ -344,7 +441,7 @@ public:
     PhysicsNode(PhysicsNode&&) = delete;
     PhysicsNode& operator=(PhysicsNode&&) = delete;
 
-    std::string_view GetName() const { return m_Node->GetName(); }
+    std::string_view GetName() const { return m_RootNode->GetName(); }
 
     void ApplyImpulse(const Vec3f& impulse);
 
@@ -369,7 +466,9 @@ public:
 private:
     friend class Scene;
 
-    const SceneNode* m_Node{ nullptr };
+    const SceneNode& GetSceneNode() const { return m_RootNode->GetSceneNode(); }
+
+    const RootSceneNode* m_RootNode{ nullptr };
     RigidBodyIdentifier m_RigidBodyId;
 };
 
@@ -401,7 +500,7 @@ public:
 
     std::string_view GetName() const { return m_Node->GetName(); }
 
-    const Mat44f& GetWorldTransform() const { return m_Node->GetWorldTransform(); }
+    const Mat44f& GetWorldTransform() const { return m_Node->GetWsMatrix(); }
 
     const BoundingSphere& GetLocalSpaceBoundingSphere() const { return m_LocalSpaceBoundingSphere; }
 
@@ -415,6 +514,8 @@ public:
 private:
     friend class Scene;
 
+    const SceneNode& GetSceneNode() const { return *m_Node; }
+
     const SceneNode* m_Node{ nullptr };
     BoundingSphere m_LocalSpaceBoundingSphere;
     std::span<const Mesh> m_Meshes;
@@ -422,10 +523,13 @@ private:
     uint32_t m_FirstMeshInstanceIndex{ 0 };
 };
 
+/// Represents a camera node within the scene graph.
+/// All CameraNodes are associated with a RootNode.
+/// CameraNodes can only appear at the root of the scene graph.
 class CameraNode
 {
 public:
-    CameraNode(const SceneNode& node, const ProjectionSettings& projectionSettings);
+    CameraNode(const RootSceneNode& rootNode, const ProjectionSettings& projectionSettings);
 
     CameraNode() = delete;
     ~CameraNode() = default;
@@ -434,11 +538,11 @@ public:
     CameraNode(CameraNode&&) = delete;
     CameraNode& operator=(CameraNode&&) = delete;
 
-    std::string_view GetName() const { return m_Node->GetName(); }
+    std::string_view GetName() const { return m_RootNode->GetName(); }
 
-    const Mat44f& GetWorldTransform() const { return m_Node->GetWorldTransform(); }
+    const Mat44f& GetWorldTransform() const { return m_RootNode->GetWsMatrix(); }
 
-    TrTransformf GetLocalTransform() const { return m_Node->GetLocalTransform().ToTrTransform(); }
+    TrTransformf GetLocalTransform() const { return m_RootNode->GetLocalTransform(); }
 
     TrTransformf GetTargetLocalTransform() const { return m_TargetLocalTransform; }
 
@@ -450,10 +554,11 @@ public:
     const ProjectionSettings& GetProjectionSettings() const { return m_ProjectionSettings; }
 
 private:
-
     friend class Scene;
 
-    const SceneNode* m_Node{ nullptr };
+    const SceneNode& GetSceneNode() const { return m_RootNode->GetSceneNode(); }
+
+    const RootSceneNode* m_RootNode{ nullptr };
     TrTransformf m_TargetLocalTransform;
     ProjectionSettings m_ProjectionSettings;
 };

@@ -483,6 +483,14 @@ ConvertRHtoLH(Mat44f& M)
     M.m[3].x = -M.m[3].x;
 }
 
+bool
+IsUnitScale(Vec3f s, float tolerance)
+{
+    return std::abs(s.x - 1.0f) <= tolerance
+        && std::abs(s.y - 1.0f) <= tolerance
+        && std::abs(s.z - 1.0f) <= tolerance;
+}
+
 template<typename T>
 Result<>
 CollectNode(
@@ -578,9 +586,21 @@ CollectNode(
         NodeDef newNodeDef //
             {
                 .Name{ nodeName },
-                .Transform{ nodeTransform },
                 .Children{ std::move(childNodes) },
             };
+
+        if constexpr (std::is_same_v<NodeDef, ChildNodeDef>)
+        {
+            newNodeDef.Transform = nodeTransform;
+        }
+        else
+        {
+            constexpr float kScaleTolerance = 1e-6f;
+            MLG_CHECK(IsUnitScale(nodeTransform.S, kScaleTolerance),
+                "Non-unit scale is not allowed for root nodes");
+
+            newNodeDef.Transform = nodeTransform.ToTrTransform();
+        }
 
         if(!modelName.empty())
         {

@@ -134,8 +134,17 @@ CreateRigidBody(const SceneNode& node,
             .s = rot.w,
         };
 
-    const b3BodyId bodyId = b3CreateBody(b3LoadWorldId(worldId.GetValue()), &bodyDef);
+    const b3BodyId bodyId = b3CreateBody(worldId.GetWorldId(), &bodyDef);
     MLG_CHECK(b3Body_IsValid(bodyId), "Failed to create body for node");
+
+    bool failed = true;
+    MLG_DEFER
+    {
+        if(failed)
+        {
+            b3DestroyBody(bodyId);
+        }
+    };
 
     for(const ColliderResource& colliderRsrc : colliderRsrcs)
     {
@@ -143,7 +152,14 @@ CreateRigidBody(const SceneNode& node,
         MLG_CHECK(shapeId);
     }
 
-    return RigidBodyIdentifier{ b3StoreBodyId(bodyId) };
+    auto rigidBodyIdResult = RigidBodyIdentifier::Create(bodyId);
+    MLG_CHECK(rigidBodyIdResult, "Failed to create rigid body identifier");
+
+    // Cancel the deferred destruction of the body since creation succeeded.
+    failed = false;
+
+    return rigidBodyIdResult;
+
 }
 
 size_t
@@ -187,10 +203,55 @@ CollectNodes(const ResourceBundle& resourceBundle, BoundedVector<char>& stringSt
         transform.R = UnitQuatf(nodeRsrc.LocalRot);
         transform.S = nodeRsrc.LocalScale;
 
-        nodes.emplace_back(name, transform, parent);
+        if(parent)
+        {
+            nodes.emplace_back(name, transform, *parent);
+        }
+        else
+        {
+            // Root nodes do not have a parent.
+            // Niether do they have scale, so use TrTransform instead of TrsTransform.
+            nodes.emplace_back(name, transform.ToTrTransform());
+        }
     }
 
     return nodes;
+}
+
+size_t
+CountRootNodes(const BoundedVector<SceneNode>& nodes)
+{
+    size_t count = 0;
+    for(const SceneNode& node : nodes)
+    {
+        if(node.GetParent() == nullptr)
+        {
+            ++count;
+        }
+        else
+        {
+            // Root nodes always come first in the list, so we can stop counting once we hit a
+            // non-root node.
+            break;
+        }
+    }
+
+    return count;
+}
+
+size_t
+CountChildNodes(const BoundedVector<SceneNode>& nodes)
+{
+    size_t count = 0;
+    for(const SceneNode& node : nodes)
+    {
+        if(node.GetParent() != nullptr)
+        {
+            ++count;
+        }
+    }
+
+    return count;
 }
 
 Result<BoundedVector<Mesh>>
@@ -218,8 +279,8 @@ CollectMeshes(const ResourceBundle& resourceBundle)
 
 Result<BoundedVector<ModelNode>>
 CollectModelNodes(const ResourceBundle& resourceBundle,
-    const std::span<const Mesh>& meshes,
-    const std::span<const SceneNode>& nodes)
+    const std::span<const Mesh> meshes,
+    const std::span<const SceneNode> nodes)
 {
     constexpr size_t kMaxMeshInstances =
         std::numeric_limits<uint32_t>::max() > std::vector<MeshInstance>().max_size()
@@ -260,7 +321,8 @@ CollectModelNodes(const ResourceBundle& resourceBundle,
 Result<BoundedVector<PhysicsNode>>
 CollectPhysicsNodes(const WorldIdentifier worldId,
     const ResourceBundle& resourceBundle,
-    const std::span<const SceneNode>& nodes)
+    const std::span<const SceneNode> nodes,
+    const std::span<const RootSceneNode> rootNodes)
 {
     const std::span rigidBodies = resourceBundle.GetRigidBodies();
     BoundedVector<PhysicsNode> physicsNodes(rigidBodies.size());
@@ -274,14 +336,25 @@ CollectPhysicsNodes(const WorldIdentifier worldId,
         auto bodyId = CreateRigidBody(sceneNode, rigidBody, colliders, worldId);
         MLG_CHECK(bodyId, "Failed to create rigid body for node");
 
-        physicsNodes.emplace_back(sceneNode, *bodyId);
+        // Find the corresponding root scene node for this physics node.
+
+        const auto rootNodeIt = std::ranges::find_if(rootNodes,
+            [&sceneNode](const RootSceneNode& rootNode)
+            { return &rootNode.GetSceneNode() == &sceneNode; });
+
+        MLG_CHECKV(rootNodeIt != rootNodes.end(),
+            "Failed to find root scene node for physics node");
+
+        physicsNodes.emplace_back(*rootNodeIt, *bodyId);
     }
 
     return physicsNodes;
 }
 
 Result<BoundedVector<CameraNode>>
-CollectCameraNodes(const ResourceBundle& resourceBundle, const std::span<const SceneNode>& nodes)
+CollectCameraNodes(const ResourceBundle& resourceBundle,
+    const std::span<const SceneNode> nodes,
+    const std::span<const RootSceneNode> rootNodes)
 {
     const std::span cameras = resourceBundle.GetCameras();
 
@@ -292,19 +365,19 @@ CollectCameraNodes(const ResourceBundle& resourceBundle, const std::span<const S
     for(const CameraResource& camera : cameras)
     {
         const SceneNode& sceneNode = nodes[camera.NodeIndex];
-        cameraNodes.emplace_back(sceneNode, ProjectionSettings{});
+
+        // Find the corresponding root scene node for this camera.
+
+        const auto rootNodeIt = std::ranges::find_if(rootNodes,
+            [&sceneNode](const RootSceneNode& rootNode)
+            { return &rootNode.GetSceneNode() == &sceneNode; });
+
+        MLG_CHECKV(rootNodeIt != rootNodes.end(), "Failed to find root scene node for camera");
+
+        cameraNodes.emplace_back(*rootNodeIt, ProjectionSettings{});
     }
 
     return cameraNodes;
-}
-
-b3BodyId
-GetBodyId(const RigidBodyIdentifier rigidBodyId)
-{
-    MLG_ASSERT(rigidBodyId.IsValid(), "RigidBodyIdentifier must be valid");
-    const b3BodyId bodyId = b3LoadBodyId(rigidBodyId.GetValue());
-    MLG_ASSERT(b3Body_IsValid(bodyId), "Node does not have a valid body id");
-    return bodyId;
 }
 
 template<typename Range>
@@ -343,12 +416,32 @@ Scene::Create(const ResourceBundle& resourceBundle)
         }
     };
 
-    const WorldIdentifier worldIdentifier{ b3StoreWorldId(worldId) };
+    const auto worldIdentifierResult = WorldIdentifier::Create(worldId);
+    MLG_CHECK(worldIdentifierResult, "Failed to create world identifier");
 
     BoundedVector<char> stringStorage(CalculateStringStorage(resourceBundle));
 
     auto sceneNodes = CollectNodes(resourceBundle, stringStorage);
     MLG_CHECK(sceneNodes, "Failed to collect scene nodes");
+
+    BoundedVector<RootSceneNode> rootNodes(CountRootNodes(*sceneNodes));
+    BoundedVector<ChildSceneNode> childNodes(CountChildNodes(*sceneNodes));
+
+    auto roots = *sceneNodes
+        | std::views::take_while([](auto& node) { return node.GetParent() == nullptr; });
+
+    auto children =
+        *sceneNodes | std::views::filter([](auto& node) { return node.GetParent() != nullptr; });
+
+    for(SceneNode& node : roots)
+    {
+        rootNodes.emplace_back(node, RootSceneNode::PassKey{});
+    }
+
+    for(SceneNode& node : children)
+    {
+        childNodes.emplace_back(node, ChildSceneNode::PassKey{});
+    }
 
     // Populate child nodes.
     const std::span nodeSpan = std::span(*sceneNodes);
@@ -367,24 +460,29 @@ Scene::Create(const ResourceBundle& resourceBundle)
     auto modelNodes = CollectModelNodes(resourceBundle, *meshes, *sceneNodes);
     MLG_CHECK(modelNodes, "Failed to collect model nodes");
 
-    auto physicsNodes = CollectPhysicsNodes(worldIdentifier, resourceBundle, *sceneNodes);
+    auto physicsNodes =
+        CollectPhysicsNodes(*worldIdentifierResult, resourceBundle, *sceneNodes, rootNodes);
     MLG_CHECK(physicsNodes, "Failed to collect physics nodes");
 
-    auto cameraNodes = CollectCameraNodes(resourceBundle, *sceneNodes);
+    auto cameraNodes = CollectCameraNodes(resourceBundle, *sceneNodes, rootNodes);
     MLG_CHECK(cameraNodes, "Failed to collect camera nodes");
 
     cleanup.release();
 
     return std::unique_ptr<Scene>(new Scene(std::move(*sceneNodes),
+        std::move(rootNodes),
+        std::move(childNodes),
         std::move(stringStorage),
         std::move(*physicsNodes),
         std::move(*modelNodes),
         std::move(*cameraNodes),
         std::move(*meshes),
-        worldIdentifier));
+        *worldIdentifierResult));
 }
 
 Scene::Scene(BoundedVector<SceneNode>&& nodes,
+    BoundedVector<RootSceneNode>&& rootNodes,
+    BoundedVector<ChildSceneNode>&& childNodes,
     BoundedVector<char>&& stringStorage,
     BoundedVector<PhysicsNode>&& physicsNodes,
     BoundedVector<ModelNode>&& modelNodes,
@@ -392,6 +490,8 @@ Scene::Scene(BoundedVector<SceneNode>&& nodes,
     BoundedVector<Mesh>&& meshes,
     const WorldIdentifier worldId)
     : m_Nodes(std::move(nodes)),
+      m_RootNodes(std::move(rootNodes)),
+      m_ChildNodes(std::move(childNodes)),
       m_StringStorage(std::move(stringStorage)),
       m_PhysicsNodes(std::move(physicsNodes)),
       m_ModelNodes(std::move(modelNodes)),
@@ -404,14 +504,7 @@ Scene::Scene(BoundedVector<SceneNode>&& nodes,
 
 Scene::~Scene()
 {
-    if(m_WorldId.IsValid())
-    {
-        const b3WorldId worldId = b3LoadWorldId(m_WorldId.GetValue());
-        MLG_ASSERT(b3World_IsValid(worldId));
-        b3DestroyWorld(worldId);
-
-        m_WorldId = {};
-    }
+    b3DestroyWorld(m_WorldId.GetWorldId());
 }
 
 Result<CameraNode*>
@@ -437,17 +530,15 @@ Scene::GetCameraNode(const std::string_view name) const
 Result<>
 Scene::SetActive(const PhysicsNode& physicsNode, bool active)
 {
-    MLG_CHECK(GetMutableNode(*physicsNode.m_Node), "Invalid or nonexistent node for physics node");
-
-    const b3BodyId bodyId = GetBodyId(physicsNode.m_RigidBodyId);
+    MLG_CHECK(GetMutableSceneNode(physicsNode), "Invalid or nonexistent node for physics node");
 
     if(!active)
     {
-        b3Body_Disable(bodyId);
+        b3Body_Disable(physicsNode.m_RigidBodyId.GetBodyId());
     }
     else
     {
-        b3Body_Enable(bodyId);
+        b3Body_Enable(physicsNode.m_RigidBodyId.GetBodyId());
     }
 
     return Result<>::Ok;
@@ -457,22 +548,20 @@ void
 Scene::Update(const float timeStep)
 {
     constexpr int kSubStepCount = 4;
-    const b3WorldId worldId = b3LoadWorldId(m_WorldId.GetValue());
-    MLG_ASSERT(b3World_IsValid(worldId));
-    b3World_Step(worldId, timeStep, kSubStepCount);
+    
+    b3World_Step(m_WorldId.GetWorldId(), timeStep, kSubStepCount);
 
     // Sync to scene nodes.
     for(const PhysicsNode& physicsNode : m_PhysicsNodes)
     {
-        SceneNode* node = GetMutableNode(*physicsNode.m_Node);
+        SceneNode* node = GetMutableSceneNode(physicsNode);
         if(!MLG_VERIFY(node, "Invalid or nonexistent node for physics node"))
         {
             continue;
         }
 
-        const b3BodyId bodyId = GetBodyId(physicsNode.m_RigidBodyId);
-        const b3Pos pos = b3Body_GetPosition(bodyId);
-        const b3Quat rot = b3Body_GetRotation(bodyId);
+        const b3Pos pos = b3Body_GetPosition(physicsNode.m_RigidBodyId.GetBodyId());
+        const b3Quat rot = b3Body_GetRotation(physicsNode.m_RigidBodyId.GetBodyId());
 
         // Rigid bodies can only be attached to root nodes.
         // Updating the local transform of a root node is equivalent to updating its world
@@ -483,7 +572,7 @@ Scene::Update(const float timeStep)
 
     for(const CameraNode& cameraNode : m_CameraNodes)
     {
-        SceneNode* node = GetMutableNode(*cameraNode.m_Node);
+        SceneNode* node = GetMutableSceneNode(cameraNode);
         if(!MLG_VERIFY(node, "Invalid or nonexistent node for camera node"))
         {
             continue;
@@ -498,7 +587,7 @@ Scene::Update(const float timeStep)
 // private:
 
 SceneNode*
-Scene::GetMutableNode(const SceneNode& nodeRef)
+Scene::GetMutableSceneNode(const SceneNode& nodeRef)
 {
     if(!MLG_VERIFY(&nodeRef >= m_Nodes.data() && &nodeRef <= &m_Nodes.back(),
            "Node is not in scene"))
@@ -506,19 +595,26 @@ Scene::GetMutableNode(const SceneNode& nodeRef)
         return nullptr;
     }
 
-    const ptrdiff_t offset = &nodeRef - m_Nodes.data();
-    if(!MLG_VERIFY(offset >= 0, "Node index out of range"))
-    {
-        return nullptr;
-    }
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
+    return const_cast<SceneNode*>(&nodeRef);
+}
 
-    const size_t index = static_cast<size_t>(offset);
-    if(!MLG_VERIFY(index < m_Nodes.size(), "Node index out of range"))
-    {
-        return nullptr;
-    }
+SceneNode*
+Scene::GetMutableSceneNode(const PhysicsNode& node)
+{
+    return GetMutableSceneNode(node.GetSceneNode());
+}
 
-    return &m_Nodes[index];
+SceneNode*
+Scene::GetMutableSceneNode(const ModelNode& node)
+{
+    return GetMutableSceneNode(node.GetSceneNode());
+}
+
+SceneNode*
+Scene::GetMutableSceneNode(const CameraNode& node)
+{
+    return GetMutableSceneNode(node.GetSceneNode());
 }
 
 void
@@ -531,12 +627,11 @@ Scene::UpdateWorldTransforms()
     {
         if(!node.GetParent())
         {
-            node.m_WorldTransform = node.m_LocalTransform.ToMatrix();
+            node.m_WsMatrix = node.m_LocalTransform.ToMatrix();
         }
         else
         {
-            node.m_WorldTransform =
-                node.GetParent()->m_WorldTransform * node.m_LocalTransform.ToMatrix();
+            node.m_WsMatrix = node.GetParent()->m_WsMatrix * node.m_LocalTransform.ToMatrix();
         }
     }
 }

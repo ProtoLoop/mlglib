@@ -1,7 +1,12 @@
 #pragma once
 
 #include "AssertHelper.h"
-#include "SemanticIdentifier.h"
+#include "Result.h"
+#include <cstddef>
+#include <cstdint>
+
+struct b3BodyId;
+struct b3WorldId;
 
 enum class MotionType
 {
@@ -74,8 +79,34 @@ private:
     float m_InvValue; // Inverse value
 };
 
-/// A strongly-typed identifier for a Box3d world.
-using WorldIdentifier = SemanticIdentifier<struct WorldTag, uint32_t, 0>;
+/// A strongly-typed identifier for a Box3d RigidBody that is valid by construction.
+class RigidBodyIdentifier
+{
+public:
+    RigidBodyIdentifier() = delete;
 
-/// A strongly-typed identifier for a Box3d RigidBody.
-using RigidBodyIdentifier = SemanticIdentifier<struct RigidBodyTag, uint64_t, 0>;
+    static Result<RigidBodyIdentifier> Create(const b3BodyId bodyId);
+
+    b3BodyId GetBodyId() const;
+
+private:
+    explicit RigidBodyIdentifier(const b3BodyId bodyId);
+
+    uint64_t m_BodyIdStorage;
+};
+
+/// A strongly-typed identifier for a Box3d world that is valid by construction.
+class WorldIdentifier
+{
+public:
+    WorldIdentifier() = delete;
+
+    static Result<WorldIdentifier> Create(const b3WorldId worldId);
+
+    b3WorldId GetWorldId() const;
+
+private:
+    explicit WorldIdentifier(const b3WorldId worldId);
+
+    uint32_t m_WorldIdStorage;
+};
