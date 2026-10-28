@@ -180,7 +180,7 @@ View::Create(System& system,
 {
     std::unique_ptr<CreateTask> task(new CreateTask(system, parentPath, resourceBundle, scene));
     MLG_CHECK(task->Start(), "Failed to start view creation task");
-    return std::move(task);
+    return task;
 }
 
 Result<>
