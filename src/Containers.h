@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <memory>
 #include <new>
+#include <span>
 #include <vector>
 
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic)
@@ -273,6 +274,12 @@ public:
         MLG_ABORTIF(index >= size(), "Index out of bounds");
         return *(begin() + index);
     }
+
+    // NOLINTNEXTLINE(google-explicit-constructor)
+    operator std::span<T>() noexcept { return { begin(), end() }; }
+    
+    // NOLINTNEXTLINE(google-explicit-constructor)
+    operator std::span<const T>() const noexcept { return { begin(), end() }; }
 
     iterator begin() noexcept { return m_End > m_Begin ? m_Begin : nullptr; }
 

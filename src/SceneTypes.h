@@ -295,15 +295,13 @@ private:
 
 /// Represents a node within the scene graph, including its local and world transforms,
 /// and hierarchical relationships.
+/// Note that the name of the node is stored as a string view and must remain valid for the lifetime
+/// of the SceneNode.
 class SceneNode
 {
 public:
-
-    static constexpr size_t kNameMaxLength = 64;
-
-    using NameType = InplaceString<kNameMaxLength>;
-
-    SceneNode(const NameType& name, const TrsTransformf& localTransform, const SceneNode* parent)
+    SceneNode(
+        const std::string_view name, const TrsTransformf& localTransform, const SceneNode* parent)
         : m_Name(name),
           m_LocalTransform(localTransform),
           m_Parent(parent)
@@ -317,7 +315,7 @@ public:
     SceneNode(SceneNode&&) = delete;
     SceneNode& operator=(SceneNode&&) = delete;
 
-    const NameType& GetName() const { return m_Name; }
+    std::string_view GetName() const { return m_Name; }
     const TrsTransformf& GetLocalTransform() const { return m_LocalTransform; }
     const Mat44f& GetWorldTransform() const { return m_WorldTransform; }
     const SceneNode* GetParent() const { return m_Parent; }
@@ -325,7 +323,7 @@ public:
 private:
     friend class Scene;
 
-    NameType m_Name;
+    std::string_view m_Name;
     TrsTransformf m_LocalTransform;
     Mat44f m_WorldTransform{ 1 };
     const SceneNode* m_Parent{ nullptr };
@@ -345,6 +343,8 @@ public:
     PhysicsNode& operator=(const PhysicsNode&) = delete;
     PhysicsNode(PhysicsNode&&) = delete;
     PhysicsNode& operator=(PhysicsNode&&) = delete;
+
+    std::string_view GetName() const { return m_Node->GetName(); }
 
     void ApplyImpulse(const Vec3f& impulse);
 
@@ -399,6 +399,8 @@ public:
     ModelNode(ModelNode&&) = delete;
     ModelNode& operator=(ModelNode&&) = delete;
 
+    std::string_view GetName() const { return m_Node->GetName(); }
+
     const Mat44f& GetWorldTransform() const { return m_Node->GetWorldTransform(); }
 
     const BoundingSphere& GetLocalSpaceBoundingSphere() const { return m_LocalSpaceBoundingSphere; }
@@ -431,6 +433,8 @@ public:
     CameraNode& operator=(const CameraNode&) = delete;
     CameraNode(CameraNode&&) = delete;
     CameraNode& operator=(CameraNode&&) = delete;
+
+    std::string_view GetName() const { return m_Node->GetName(); }
 
     const Mat44f& GetWorldTransform() const { return m_Node->GetWorldTransform(); }
 

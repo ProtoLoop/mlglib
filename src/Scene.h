@@ -42,6 +42,7 @@ public:
 
 private:
     Scene(BoundedVector<SceneNode>&& nodes,
+        BoundedVector<char>&& stringStorage,
         BoundedVector<PhysicsNode>&& physicsNodes,
         BoundedVector<ModelNode>&& modelNodes,
         BoundedVector<CameraNode>&& cameraNodes,
@@ -53,6 +54,7 @@ private:
     void UpdateWorldTransforms();
 
     BoundedVector<SceneNode> m_Nodes;
+    BoundedVector<char> m_StringStorage;
     BoundedVector<PhysicsNode> m_PhysicsNodes;
     BoundedVector<ModelNode> m_ModelNodes;
     BoundedVector<CameraNode> m_CameraNodes;

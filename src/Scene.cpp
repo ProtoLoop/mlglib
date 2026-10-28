@@ -1,11 +1,13 @@
 #include "Scene.h"
 
+#include "Containers.h"
 #include "Defer.h"
 #include "PhysicsTypes.h"
 #include "ResourceBundle.h"
 
 #include <box3d/Box3D.h>
 #include <box3d/collision.h>
+#include <cstddef>
 #include <ranges>
 
 namespace
@@ -144,8 +146,20 @@ CreateRigidBody(const SceneNode& node,
     return RigidBodyIdentifier{ b3StoreBodyId(bodyId) };
 }
 
+size_t
+CalculateStringStorage(const ResourceBundle& resourceBundle)
+{
+    size_t totalSize = 0;
+    const std::span nodeRsrcs = resourceBundle.GetNodes();
+    for(const auto& nodeRsrc : nodeRsrcs)
+    {
+        totalSize += resourceBundle.GetStringView(nodeRsrc.Name).size();
+    }
+    return totalSize;
+}
+
 Result<BoundedVector<SceneNode>>
-CollectNodes(const ResourceBundle& resourceBundle)
+CollectNodes(const ResourceBundle& resourceBundle, BoundedVector<char>& stringStorage)
 {
     const std::span nodeRsrcs = resourceBundle.GetNodes();
 
@@ -159,14 +173,21 @@ CollectNodes(const ResourceBundle& resourceBundle)
             parent = &nodes[nodeRsrc.ParentIndex];
         }
 
-        const std::string_view name = resourceBundle.GetStringView(nodeRsrc.Name);
+        std::string_view name = resourceBundle.GetStringView(nodeRsrc.Name);
+
+        const size_t sizeofStringStorage = stringStorage.size();
+
+        stringStorage.append_range(name);
+
+        name = std::string_view(stringStorage.data(), stringStorage.size())
+                   .substr(sizeofStringStorage);
 
         TrsTransformf transform;
         transform.T = nodeRsrc.LocalPos;
         transform.R = UnitQuatf(nodeRsrc.LocalRot);
         transform.S = nodeRsrc.LocalScale;
 
-        nodes.emplace_back(SceneNode::NameType(name), transform, parent);
+        nodes.emplace_back(name, transform, parent);
     }
 
     return nodes;
@@ -227,7 +248,8 @@ CollectModelNodes(const ResourceBundle& resourceBundle,
 
         MLG_CHECKV(modelRsrc.MeshCount > 0, "Model has no mesh instances");
         MLG_CHECKV(modelRsrc.MeshCount <= kMaxMeshInstances, "Too many mesh instances");
-        MLG_CHECKV(kMaxMeshInstances - meshInstanceIndex >= modelRsrc.MeshCount, "Too many mesh instances");
+        MLG_CHECKV(kMaxMeshInstances - meshInstanceIndex >= modelRsrc.MeshCount,
+            "Too many mesh instances");
 
         meshInstanceIndex += modelRsrc.MeshCount;
     }
@@ -284,6 +306,23 @@ GetBodyId(const RigidBodyIdentifier rigidBodyId)
     MLG_ASSERT(b3Body_IsValid(bodyId), "Node does not have a valid body id");
     return bodyId;
 }
+
+template<typename Range>
+auto
+FindNodeByName(Range& nodes, const std::string_view name) -> decltype(&nodes[0])
+{
+    using NodeType = decltype(nodes[0]);
+
+    for(NodeType& node : nodes)
+    {
+        if(node.GetName() == name)
+        {
+            return &node;
+        }
+    }
+
+    return nullptr;
+}
 } // namespace
 
 Result<std::unique_ptr<Scene>>
@@ -306,7 +345,9 @@ Scene::Create(const ResourceBundle& resourceBundle)
 
     const WorldIdentifier worldIdentifier{ b3StoreWorldId(worldId) };
 
-    auto sceneNodes = CollectNodes(resourceBundle);
+    BoundedVector<char> stringStorage(CalculateStringStorage(resourceBundle));
+
+    auto sceneNodes = CollectNodes(resourceBundle, stringStorage);
     MLG_CHECK(sceneNodes, "Failed to collect scene nodes");
 
     // Populate child nodes.
@@ -335,6 +376,7 @@ Scene::Create(const ResourceBundle& resourceBundle)
     cleanup.release();
 
     return std::unique_ptr<Scene>(new Scene(std::move(*sceneNodes),
+        std::move(stringStorage),
         std::move(*physicsNodes),
         std::move(*modelNodes),
         std::move(*cameraNodes),
@@ -343,12 +385,14 @@ Scene::Create(const ResourceBundle& resourceBundle)
 }
 
 Scene::Scene(BoundedVector<SceneNode>&& nodes,
+    BoundedVector<char>&& stringStorage,
     BoundedVector<PhysicsNode>&& physicsNodes,
     BoundedVector<ModelNode>&& modelNodes,
     BoundedVector<CameraNode>&& cameraNodes,
     BoundedVector<Mesh>&& meshes,
     const WorldIdentifier worldId)
     : m_Nodes(std::move(nodes)),
+      m_StringStorage(std::move(stringStorage)),
       m_PhysicsNodes(std::move(physicsNodes)),
       m_ModelNodes(std::move(modelNodes)),
       m_CameraNodes(std::move(cameraNodes)),
@@ -373,37 +417,21 @@ Scene::~Scene()
 Result<CameraNode*>
 Scene::GetCameraNode(const std::string_view name)
 {
-    const SceneNode::NameType nodeName{name};
+    CameraNode* node = FindNodeByName(m_CameraNodes, name);
 
-    for(CameraNode& cameraNode : m_CameraNodes)
-    {
-        if(cameraNode.m_Node->GetName() == nodeName)
-        {
-            return &cameraNode;
-        }
-    }
-    
-    MLG_ERROR("Camera node not found: {}", name);
+    MLG_CHECK(node, "Failed to find camera node");
 
-    return Result<>::Fail;
+    return node;
 }
 
 Result<const CameraNode*>
 Scene::GetCameraNode(const std::string_view name) const
 {
-    const SceneNode::NameType nodeName{name};
+    const CameraNode* node = FindNodeByName(m_CameraNodes, name);
 
-    for(const CameraNode& cameraNode : m_CameraNodes)
-    {
-        if(cameraNode.m_Node->GetName() == nodeName)
-        {
-            return &cameraNode;
-        }
-    }
-    
-    MLG_ERROR("Camera node not found: {}", name);
+    MLG_CHECK(node, "Failed to find camera node");
 
-    return Result<>::Fail;
+    return node;
 }
 
 Result<>
