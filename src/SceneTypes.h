@@ -5,6 +5,7 @@
 #include "FilePath.h"
 #include "InplaceString.h"
 #include "PhysicsTypes.h"
+#include "ProjectionSettings.h"
 #include "VecMath.h"
 
 #include <optional>
@@ -155,6 +156,10 @@ struct RigidBodyDef final
     std::vector<ColliderDef> Colliders;
 };
 
+struct CameraDef final
+{
+};
+
 struct ChildNodeDef final
 {
     SceneDefs::NameString Name;
@@ -170,6 +175,7 @@ struct RootNodeDef final
     std::vector<ChildNodeDef> Children;
     std::optional<ModelRef> Model;
     std::optional<RigidBodyDef> Body;
+    std::optional<CameraDef> Camera;
 };
 
 struct SceneDef final
@@ -292,16 +298,14 @@ private:
 class SceneNode
 {
 public:
-    enum class Flags : uint8_t
-    {
-        None = 0,
-        Active = 1 << 0,
-        Visible = 1 << 1,
-        All = Active | Visible
-    };
 
-    SceneNode(const TrsTransformf& localTransform, const SceneNode* parent)
-        : m_LocalTransform(localTransform),
+    static constexpr size_t kNameMaxLength = 64;
+
+    using NameType = InplaceString<kNameMaxLength>;
+
+    SceneNode(const NameType& name, const TrsTransformf& localTransform, const SceneNode* parent)
+        : m_Name(name),
+          m_LocalTransform(localTransform),
           m_Parent(parent)
     {
     }
@@ -313,44 +317,23 @@ public:
     SceneNode(SceneNode&&) = delete;
     SceneNode& operator=(SceneNode&&) = delete;
 
-    bool IsActive() const { return (m_Flags & Flags::Active) == Flags::Active; }
-    bool IsVisible() const { return (m_Flags & Flags::Visible) == Flags::Visible; }
-
+    const NameType& GetName() const { return m_Name; }
     const TrsTransformf& GetLocalTransform() const { return m_LocalTransform; }
     const Mat44f& GetWorldTransform() const { return m_WorldTransform; }
     const Vec3f& GetLinearVelocity() const { return m_LinearVelocity; }
     const Vec3f& GetAngularVelocity() const { return m_AngularVelocity; }
     const SceneNode* GetParent() const { return m_Parent; }
 
-    friend Flags operator|(const Flags a, const Flags b)
-    {
-        using U = std::underlying_type_t<Flags>;
-        return static_cast<Flags>(static_cast<U>(a) | static_cast<U>(b));
-    }
-
-    friend Flags operator&(const Flags a, const Flags b)
-    {
-        using U = std::underlying_type_t<Flags>;
-        return static_cast<Flags>(static_cast<U>(a) & static_cast<U>(b));
-    }
-
-    friend Flags operator~(const Flags a)
-    {
-        using U = std::underlying_type_t<Flags>;
-
-        return static_cast<Flags>(static_cast<U>(~static_cast<U>(a)) & static_cast<U>(Flags::All));
-    }
-
 private:
     friend class Scene;
 
+    NameType m_Name;
     TrsTransformf m_LocalTransform;
     Vec3f m_LinearVelocity{ 0 };
     Vec3f m_AngularVelocity{ 0 };
     Mat44f m_WorldTransform{ 1 };
     const SceneNode* m_Parent{ nullptr };
     std::span<SceneNode> m_Children;
-    Flags m_Flags{ Flags::Active | Flags::Visible };
 };
 
 /// Represents a node in the scene to which physics can be applied.
@@ -358,7 +341,7 @@ private:
 class PhysicsNode
 {
 public:
-    PhysicsNode(SceneNode& node, const RigidBodyIdentifier rigidBodyId);
+    PhysicsNode(const SceneNode& node, const RigidBodyIdentifier rigidBodyId);
 
     PhysicsNode() = delete;
     ~PhysicsNode() = default;
@@ -390,7 +373,7 @@ public:
 private:
     friend class Scene;
 
-    SceneNode* m_Node{ nullptr };
+    const SceneNode* m_Node{ nullptr };
     RigidBodyIdentifier m_RigidBodyId;
 };
 
@@ -431,13 +414,46 @@ public:
 
     std::span<const Mesh> GetMeshes() const { return m_Meshes; }
 
-    bool IsVisible() const { return m_Node->IsVisible(); }
-
 private:
     friend class Scene;
 
     const SceneNode* m_Node{ nullptr };
     BoundingSphere m_LocalSpaceBoundingSphere;
     std::span<const Mesh> m_Meshes;
-    uint32_t m_FirstMeshInstanceIndex{ 0 }; // Index of the first mesh instance in the scene's mesh instance collection
+    // Index of the first mesh instance in the scene's mesh instance collection
+    uint32_t m_FirstMeshInstanceIndex{ 0 };
+};
+
+class CameraNode
+{
+public:
+    CameraNode(const SceneNode& node, const ProjectionSettings& projectionSettings);
+
+    CameraNode() = delete;
+    ~CameraNode() = default;
+    CameraNode(const CameraNode&) = delete;
+    CameraNode& operator=(const CameraNode&) = delete;
+    CameraNode(CameraNode&&) = delete;
+    CameraNode& operator=(CameraNode&&) = delete;
+
+    const Mat44f& GetWorldTransform() const { return m_Node->GetWorldTransform(); }
+
+    TrTransformf GetLocalTransform() const { return m_Node->GetLocalTransform().ToTrTransform(); }
+
+    TrTransformf GetTargetLocalTransform() const { return m_TargetLocalTransform; }
+
+    void SetTargetLocalTransform(const TrTransformf& transform)
+    {
+        m_TargetLocalTransform = transform;
+    }
+
+    const ProjectionSettings& GetProjectionSettings() const { return m_ProjectionSettings; }
+
+private:
+
+    friend class Scene;
+
+    const SceneNode* m_Node{ nullptr };
+    TrTransformf m_TargetLocalTransform;
+    ProjectionSettings m_ProjectionSettings;
 };

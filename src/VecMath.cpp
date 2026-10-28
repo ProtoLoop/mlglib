@@ -2,27 +2,6 @@
 #include <limits>
 
 template<typename T>
-const UnitQuat<T> UnitQuat<T>::Identity{ T{ 0 }, T{ 0 }, T{ 0 }, T{ 1 } };
-
-template<typename T>
-const Mat44<T> Mat44<T>::Identity{ T{ 1 } };
-
-template<typename NumType>
-const TrTransform<NumType> TrTransform<NumType>::Identity //
-    {
-        .T = Vec3<NumType>{ 0 },
-        .R = UnitQuat<NumType>::Identity,
-    };
-
-template<typename NumType>
-const TrsTransform<NumType> TrsTransform<NumType>::Identity //
-    {
-        .T = Vec3<NumType>{ 0 },
-        .R = UnitQuat<NumType>::Identity,
-        .S = Vec3<NumType>{ 1 },
-    };
-
-template<typename T>
 Mat44<T>
 UnitQuat<T>::ToMatrix() const noexcept
 {
@@ -325,7 +304,7 @@ TrTransform<NumType>::Inverse() const noexcept
 {
     const UnitQuat<NumType> r = R.Inverse();
 
-    const TrTransform result{ .T = -(r * T), .R = r };
+    const TrTransform result(r, -(r * T));
 
     return result;
 }
@@ -425,11 +404,6 @@ Rect::Intersect(const Rect& other) const noexcept
         .Width = static_cast<unsigned>(x1 - x0),
         .Height = static_cast<unsigned>(y1 - y0) });
 }
-
-template UnitQuat<float> UnitQuat<float>::Identity;
-template Mat44<float> Mat44<float>::Identity;
-template TrTransform<float> TrTransform<float>::Identity;
-template TrsTransform<float> TrsTransform<float>::Identity;
 
 template Mat44<float> UnitQuat<float>::ToMatrix() const noexcept;
 

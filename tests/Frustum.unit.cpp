@@ -1,3 +1,4 @@
+
 #include "BoundingVolumes.h"
 #include "Frustum.h"
 
@@ -551,7 +552,7 @@ TEST(Frustum, Transform_PreservesContainmentAndAgreesAcrossOverloads)
     ASSERT_TRUE(result);
     const Frustum& local = *result;
     const auto transform = MakeTranslatedRotatedCameraTransform();
-    const Frustum identity = local.Transform(TrTransformf::Identity);
+    const Frustum identity = local.Transform(TrTransformf::Identity());
     const Frustum world = local.Transform(transform);
     const Frustum matrixWorld = local.Transform(transform.ToMatrix());
     const auto localPlanes = GetPlanes(local);

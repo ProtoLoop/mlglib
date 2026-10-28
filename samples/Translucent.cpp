@@ -6,7 +6,7 @@
 #include "Log.h"
 #include "PerfMetrics.h"
 #include "ResourceBundle.h"
-#include "SceneTypes.h"
+#include "Scene.h"
 #include "ShapeDefs.h"
 #include "Shell.h"
 #include "System.h"
@@ -151,8 +151,6 @@ TranslucentApp::OnStart(System& system)
 
     m_LevelCreateTask = std::move(*createTaskResult);
 
-    m_CameraActor.emplace(system.GetInputMapper());
-
     m_Stage = Stage::CreatingLevel;
 
     return Result<>::Ok;
@@ -189,14 +187,23 @@ TranslucentApp::OnUpdate()
                 else
                 {
                     m_Level = std::move(*levelResult);
-                    m_CameraActor->SetTransform(TrTransformf{ .T = { 0, 0, -4 } });
-                    if(!AddActionMappings())
+
+                    if(auto cameraNodeResult = m_Level->GetScene().GetCameraNode("DefaultCamera");
+                        !cameraNodeResult)
+                    {
+                        MLG_ERROR("Failed to get default camera node");
+                        m_Stage = Stage::Stopped;
+                    }
+                    else if(!AddActionMappings())
                     {
                         MLG_ERROR("Failed to add action mappings");
                         m_Stage = Stage::Stopped;
                     }
                     else
                     {
+                        CameraNode* cameraNode = *cameraNodeResult;
+                        m_CameraActor.emplace(m_System->GetInputMapper(), *cameraNode);
+                        m_CameraActor->SetTransform(TrTransformf{ .T = { 0, 0, -4 } });
                         m_Stage = Stage::Running;
                     }
 
@@ -233,6 +240,8 @@ TranslucentApp::OnUpdate()
                 {
                     m_CameraActor->Update(m_System->GetInputMapper(), elapsedSeconds);
                 }
+
+                m_Level->GetScene().Update(elapsedSeconds);
 
                 if(!MLG_VERIFY(Render(), "Failed to render view"))
                 {

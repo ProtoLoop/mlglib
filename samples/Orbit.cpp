@@ -7,6 +7,7 @@
 #include "PerfMetrics.h"
 #include "ResourceBundle.h"
 #include "Scene.h"
+#include "SceneTypes.h"
 #include "ShapeDefs.h"
 #include "System.h"
 #include "SystemCreateTask.h"
@@ -587,10 +588,14 @@ MainLoop()
 
     ApplyRandomVelocities(scene);
 
-    constexpr float kInitialCameraDistance = 40.0f;
+    auto cameraNodeResult = scene.GetCameraNode("DefaultCamera");
+    MLG_CHECK(cameraNodeResult, "Failed to get default camera node");
+    CameraActor cameraActor(system->GetInputMapper(), *cameraNodeResult.Value());
 
-    CameraActor cameraActor(system->GetInputMapper());
-    cameraActor.SetTransform(TrTransformf{ .T{ 0, 0, -kInitialCameraDistance } });
+    constexpr float kInitialCameraDistance = 40.0f;
+    const Vec3f cameraPos{ 0, 0, -kInitialCameraDistance };
+
+    cameraActor.SetTransform(TrTransformf{ .T = cameraPos });
 
     bool pauseSim = false;
 
@@ -627,6 +632,9 @@ MainLoop()
     Timer frameTimer;
 
     bool isCameraActorActive = false;
+
+    std::vector<Vec3f> savedLinearVel;
+    std::vector<Vec3f> savedAngularVel;
 
     while(!system->ShouldQuit())
     {
@@ -677,11 +685,49 @@ MainLoop()
         if(inputMapper.IsActionTriggered(Pause))
         {
             pauseSim = !pauseSim;
+
+            const std::span physNodes = scene.GetAllPhysicsNodes();
+
+            if(pauseSim)
+            {
+                // Disabling physics nodes clears their velocities, so we save them first.
+                savedLinearVel.clear();
+                savedAngularVel.clear();
+                savedLinearVel.reserve(physNodes.size());
+                savedAngularVel.reserve(physNodes.size());
+
+                for(const PhysicsNode& physicsNode : physNodes)
+                {
+                    savedLinearVel.push_back(physicsNode.GetLinearVelocity());
+                    savedAngularVel.push_back(physicsNode.GetAngularVelocity());
+                }
+            }
+
+            for(const PhysicsNode& physicsNode : physNodes)
+            {
+                MLG_CHECK(scene.SetActive(physicsNode, !pauseSim));
+            }
+
+            if(!pauseSim)
+            {
+                // Restore saved velocities after re-enabling physics nodes.
+                for(size_t i = 0; i < physNodes.size(); ++i)
+                {
+                    physNodes[i].SetLinearVelocity(savedLinearVel[i]);
+                    physNodes[i].SetAngularVelocity(savedAngularVel[i]);
+                }
+            }
         }
+
+        if(isCameraActorActive)
+        {
+            cameraActor.Update(inputMapper, elapsedSeconds);
+        }
+
+        scene.Update(kPhysicsTimeStep);
 
         if(!pauseSim)
         {
-            scene.Update(kPhysicsTimeStep);
             ApplyGravity(scene, system->GetThreadPool());
 
             const float kineticEnergy = ComputeKineticEnergy(scene);
@@ -689,11 +735,6 @@ MainLoop()
 
             PerfCounterGlobals::TotalKE.Set(kineticEnergy);
             PerfCounterGlobals::TotalEnergy.Set(totalEnergy);
-        }
-
-        if(isCameraActorActive)
-        {
-            cameraActor.Update(inputMapper, elapsedSeconds);
         }
 
         auto target = gpuHelper.GetSwapChainTexture();

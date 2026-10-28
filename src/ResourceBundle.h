@@ -95,6 +95,7 @@ struct ModelResource;
 struct ModelInstanceResource;
 struct ColliderResource;
 struct RigidBodyResource;
+struct CameraResource;
 struct SceneNodeResource;
 
 class ResourceBundleBuilder;
@@ -153,7 +154,8 @@ public:
 
     static constexpr size_t kMaxOffset = kMaxBundleSize - 1;
 
-    static Result<std::unique_ptr<LoadTask>> Load(const FilePath& filePath, FileFetcher& fileFetcher);
+    static Result<std::unique_ptr<LoadTask>> Load(const FilePath& filePath,
+        FileFetcher& fileFetcher);
 
 #define RESOURCE_BUNDLE_HEADER_FIELDS(X)                                                           \
     X(IndexType, Checksum, 0)                                                                      \
@@ -172,6 +174,7 @@ public:
     X(OffsetType, ModelInstancesOffset, kInvalidOffset)                                            \
     X(OffsetType, CollidersOffset, kInvalidOffset)                                                 \
     X(OffsetType, RigidBodiesOffset, kInvalidOffset)                                               \
+    X(OffsetType, CamerasOffset, kInvalidOffset)                                                   \
     X(OffsetType, NodesOffset, kInvalidOffset)                                                     \
     X(IndexType, CharsLength, 0)                                                                   \
     X(IndexType, StringCount, 0)                                                                   \
@@ -184,6 +187,7 @@ public:
     X(IndexType, ModelInstanceCount, 0)                                                            \
     X(IndexType, ColliderCount, 0)                                                                 \
     X(IndexType, RigidBodyCount, 0)                                                                \
+    X(IndexType, CameraCount, 0)                                                                   \
     X(IndexType, NodeCount, 0)
 
     struct Header
@@ -191,7 +195,7 @@ public:
         RESOURCE_BUNDLE_HEADER_FIELDS(MLG_DECLARE_FIELD)
     };
     static_assert(BinaryStruct<Header>);
-    MLG_ASSERT_FIELD_COUNT(RESOURCE_BUNDLE_HEADER_FIELDS, 29);
+    MLG_ASSERT_FIELD_COUNT(RESOURCE_BUNDLE_HEADER_FIELDS, 31);
     MLG_ASSERT_NO_PADDING(Header, RESOURCE_BUNDLE_HEADER_FIELDS);
     MLG_ASSERT_OFFSET(Header, Checksum, 0)
     MLG_ASSERT_OFFSET(Header, Magic0, 4)
@@ -209,20 +213,22 @@ public:
     MLG_ASSERT_OFFSET(Header, ModelInstancesOffset, 52)
     MLG_ASSERT_OFFSET(Header, CollidersOffset, 56)
     MLG_ASSERT_OFFSET(Header, RigidBodiesOffset, 60)
-    MLG_ASSERT_OFFSET(Header, NodesOffset, 64)
-    MLG_ASSERT_OFFSET(Header, CharsLength, 68)
-    MLG_ASSERT_OFFSET(Header, StringCount, 72)
-    MLG_ASSERT_OFFSET(Header, TextureCount, 76)
-    MLG_ASSERT_OFFSET(Header, MaterialCount, 80)
-    MLG_ASSERT_OFFSET(Header, VertexCount, 84)
-    MLG_ASSERT_OFFSET(Header, IndexCount, 88)
-    MLG_ASSERT_OFFSET(Header, MeshCount, 92)
-    MLG_ASSERT_OFFSET(Header, ModelCount, 96)
-    MLG_ASSERT_OFFSET(Header, ModelInstanceCount, 100)
-    MLG_ASSERT_OFFSET(Header, ColliderCount, 104)
-    MLG_ASSERT_OFFSET(Header, RigidBodyCount, 108)
-    MLG_ASSERT_OFFSET(Header, NodeCount, 112)
-    MLG_ASSERT_SIZE(Header, 116)
+    MLG_ASSERT_OFFSET(Header, CamerasOffset, 64)
+    MLG_ASSERT_OFFSET(Header, NodesOffset, 68)
+    MLG_ASSERT_OFFSET(Header, CharsLength, 72)
+    MLG_ASSERT_OFFSET(Header, StringCount, 76)
+    MLG_ASSERT_OFFSET(Header, TextureCount, 80)
+    MLG_ASSERT_OFFSET(Header, MaterialCount, 84)
+    MLG_ASSERT_OFFSET(Header, VertexCount, 88)
+    MLG_ASSERT_OFFSET(Header, IndexCount, 92)
+    MLG_ASSERT_OFFSET(Header, MeshCount, 96)
+    MLG_ASSERT_OFFSET(Header, ModelCount, 100)
+    MLG_ASSERT_OFFSET(Header, ModelInstanceCount, 104)
+    MLG_ASSERT_OFFSET(Header, ColliderCount, 108)
+    MLG_ASSERT_OFFSET(Header, RigidBodyCount, 112)
+    MLG_ASSERT_OFFSET(Header, CameraCount, 116)
+    MLG_ASSERT_OFFSET(Header, NodeCount, 120)
+    MLG_ASSERT_SIZE(Header, 124)
 
     ResourceBundle() = default;
     ~ResourceBundle() = default;
@@ -264,6 +270,8 @@ public:
     std::span<const ColliderResource> GetColliders(const RigidBodyResource& rigidBodyRsrc) const;
 
     std::span<const RigidBodyResource> GetRigidBodies() const;
+
+    std::span<const CameraResource> GetCameras() const;
 
     std::span<const SceneNodeResource> GetNodes() const;
 
@@ -348,6 +356,7 @@ private:
     Result<> Append(const std::span<const ModelInstanceResource>& modelInstances);
     Result<> Append(const std::span<const ColliderResource>& colliders);
     Result<> Append(const std::span<const RigidBodyResource>& rigidBodies);
+    Result<> Append(const std::span<const CameraResource>& cameras);
     Result<> Append(const std::span<const SceneNodeResource>& nodes);
 
     std::vector<std::byte> m_Buffer;
@@ -368,7 +377,6 @@ public:
     Result<ResourceBundle> Take();
 
 private:
-
     friend class ResourceBundle;
 
     LoadTask(const FilePath& filePath, FileFetcher& fileFetcher);
@@ -405,10 +413,10 @@ MLG_ASSERT_SIZE(StringResource, 8)
 /// Flags indicating which encoding variants are available, in addition to the original format.
 enum TextureResourceEncoding : uint32_t // NOLINT(cppcoreguidelines-use-enum-class)
 {
-    None = 0x00, // No encoding variants available
-    BC7 = 0x01,  // Block Compression encoding variant
-    ASTC = 0x02, // Adaptive Scalable Texture Compression encoding variant
-    RGBA = 0x04, // Uncompressed RGBA KTX2 variant
+    None = 0x00,             // No encoding variants available
+    BC7 = 0x01,              // Block Compression encoding variant
+    ASTC = 0x02,             // Adaptive Scalable Texture Compression encoding variant
+    RGBA = 0x04,             // Uncompressed RGBA KTX2 variant
     All = BC7 | ASTC | RGBA, // All encoding variants available
 };
 #define TEXTURE_RESOURCE_FIELDS(X)                                                                 \
@@ -465,7 +473,7 @@ MLG_ASSERT_SIZE(MaterialResource, 32)
     X(BoundingBox, BoundingBox)
 
 // clang-tidy false positive
-//NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
 struct MeshResource final
 {
     MESH_RESOURCE_FIELDS(MLG_DECLARE_FIELD)
@@ -488,7 +496,7 @@ MLG_ASSERT_SIZE(MeshResource, 40)
     X(BoundingBox, BoundingBox)
 
 // clang-tidy false positive
-//NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
 struct ModelResource final
 {
     MODEL_RESOURCE_FIELDS(MLG_DECLARE_FIELD)
@@ -636,7 +644,7 @@ MLG_ASSERT_SIZE(ColliderResource, 32)
     X(ResourceBundle::IndexType, ColliderCount, 0)
 
 // clang-tidy false positive
-//NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
 struct RigidBodyResource final
 {
     RIGID_BODY_RESOURCE_FIELDS(MLG_DECLARE_FIELD)
@@ -650,6 +658,21 @@ MLG_ASSERT_OFFSET(RigidBodyResource, MotionType, 8)
 MLG_ASSERT_OFFSET(RigidBodyResource, FirstColliderIndex, 12)
 MLG_ASSERT_OFFSET(RigidBodyResource, ColliderCount, 16)
 MLG_ASSERT_SIZE(RigidBodyResource, 20)
+
+/// CameraResource
+
+#define CAMERA_RESOURCE_FIELDS(X)                                                                  \
+    X(ResourceBundle::IndexType, NodeIndex, ResourceBundle::kInvalidIndex)
+
+struct CameraResource final
+{
+    CAMERA_RESOURCE_FIELDS(MLG_DECLARE_FIELD)
+};
+static_assert(BinaryStruct<CameraResource>);
+MLG_ASSERT_FIELD_COUNT(CAMERA_RESOURCE_FIELDS, 1);
+MLG_ASSERT_NO_PADDING(CameraResource, CAMERA_RESOURCE_FIELDS);
+MLG_ASSERT_OFFSET(CameraResource, NodeIndex, 0)
+MLG_ASSERT_SIZE(CameraResource, 4)
 
 /// SceneNodeResource
 

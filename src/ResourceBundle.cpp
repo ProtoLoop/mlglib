@@ -201,7 +201,7 @@ FlattenNodesBreadthFirst(const std::span<const RootNodeDef> rootNodeDefs)
         const PendingNode pendingNode = pendingNodes.front();
         pendingNodes.pop_front();
         const size_t curNodeIndex = flatNodes.size();
-
+        
         const FlatNodeDef flatNodeDef //
             {
                 .NodeDefPtr = pendingNode.Node,
@@ -860,6 +860,53 @@ CollectRigidBodies(const std::span<const RootNodeDef> nodeDefs)
     return rigidBodies;
 }
 
+Result<std::vector<CameraResource>>
+CollectCameras(const std::span<const RootNodeDef> nodeDefs)
+{
+    std::vector<CameraResource> cameras;
+
+    static const size_t kMaxCameraCount = std::min( //
+        {
+            static_cast<size_t>(kMaxVectorSize<CameraResource>),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
+
+    size_t count = 0;
+    for(const RootNodeDef& nodeDef : nodeDefs)
+    {
+        if(nodeDef.Camera)
+        {
+            MLG_CHECKV(!safeint::AddWillOverflow(count, 1uz, kMaxCameraCount),
+                "Camera count overflow");
+            ++count;
+        }
+    }
+
+    cameras.reserve(count);
+
+    for(size_t nodeIndex = 0; nodeIndex < nodeDefs.size(); ++nodeIndex)
+    {
+        const RootNodeDef& nodeDef = nodeDefs[nodeIndex];
+
+        const std::optional<CameraDef> camera = nodeDef.Camera;
+        if(!camera)
+        {
+            continue;
+        }
+
+        const CameraResource cameraRsrc //
+            {
+                .NodeIndex = static_cast<IndexType>(nodeIndex),
+            };
+
+        cameras.push_back(cameraRsrc);
+    }
+
+    MLG_CHECKV(!cameras.empty(), "No cameras found");
+
+    return cameras;
+}
+
 Result<std::vector<SceneNodeResource>>
 CollectSceneNodes(const std::span<const FlatNodeDef> flatNodeDefs,
     const StringLookup& stringIndexMap)
@@ -1141,6 +1188,15 @@ ResourceBundle::GetRigidBodies() const
         : std::span<const RigidBodyResource>();
 }
 
+std::span<const CameraResource>
+ResourceBundle::GetCameras() const
+{
+    const Header* header = GetHeader();
+    return MLG_VERIFY(header, "Header is not initialized")
+        ? GetSpan<CameraResource>(header->CamerasOffset, header->CameraCount)
+        : std::span<const CameraResource>();
+}
+
 std::span<const SceneNodeResource>
 ResourceBundle::GetNodes() const
 {
@@ -1225,7 +1281,37 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
     // Free old buffer mem
     std::vector<std::byte>().swap(m_Buffer);
 
-    const auto flatNodeDefs = FlattenNodesBreadthFirst(sceneDef.NodeDefs);
+    std::span rootNodeDefs(sceneDef.NodeDefs);
+
+    // Make sure there's a default camera node if none exist.
+
+    bool hasDefaultCamera = false;
+    for(const RootNodeDef& rootNodeDef : rootNodeDefs)
+    {
+        if(rootNodeDef.Camera && rootNodeDef.Name == "DefaultCamera")
+        {
+            hasDefaultCamera = true;
+        }
+    }
+
+    std::vector<RootNodeDef> newRootNodeDefs;
+
+    if(!hasDefaultCamera)
+    {
+        newRootNodeDefs = std::vector<RootNodeDef>(rootNodeDefs.begin(), rootNodeDefs.end());
+
+        // Add a default camera node
+        const RootNodeDef defaultCameraNodeDef
+        {
+            .Name{"DefaultCamera"},
+            .Camera{CameraDef{}}
+        };
+
+        newRootNodeDefs.emplace_back(defaultCameraNodeDef);
+        rootNodeDefs = std::span(newRootNodeDefs);
+    }
+
+    const auto flatNodeDefs = FlattenNodesBreadthFirst(rootNodeDefs);
     MLG_CHECK(flatNodeDefs);
 
     const auto meshDefs = CollectMeshDefs(sceneDef.ModelDefs);
@@ -1249,10 +1335,12 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
     MLG_CHECK(modelIndexMap);
     const auto modelInstances = CollectModelInstances(*flatNodeDefs, *modelIndexMap);
     MLG_CHECK(modelInstances);
-    const auto colliders = CollectColliders(sceneDef.NodeDefs);
+    const auto colliders = CollectColliders(rootNodeDefs);
     MLG_CHECK(colliders);
-    const auto rigidBodies = CollectRigidBodies(sceneDef.NodeDefs);
+    const auto rigidBodies = CollectRigidBodies(rootNodeDefs);
     MLG_CHECK(rigidBodies);
+    const auto cameras = CollectCameras(rootNodeDefs);
+    MLG_CHECK(cameras);
     const auto nodes = CollectSceneNodes(*flatNodeDefs, *stringIndexMap);
     MLG_CHECK(nodes);
 
@@ -1293,6 +1381,7 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
     MLG_CHECK(addAndCheckOverflow(*modelInstances));
     MLG_CHECK(addAndCheckOverflow(*colliders));
     MLG_CHECK(addAndCheckOverflow(*rigidBodies));
+    MLG_CHECK(addAndCheckOverflow(*cameras));
     MLG_CHECK(addAndCheckOverflow(*nodes));
 
     m_Buffer.reserve(totalSize);
@@ -1309,6 +1398,7 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
     MLG_CHECK(Append(*modelInstances));
     MLG_CHECK(Append(*colliders));
     MLG_CHECK(Append(*rigidBodies));
+    MLG_CHECK(Append(*cameras));
     MLG_CHECK(Append(*nodes));
 
     GetHeader()->Checksum = GetChecksum(m_Buffer);
@@ -1471,6 +1561,19 @@ ResourceBundleBuilder::Append(const std::span<const RigidBodyResource>& rigidBod
     h->RigidBodiesOffset = static_cast<OffsetType>(m_Buffer.size());
     h->RigidBodyCount = static_cast<IndexType>(rigidBodies.size());
     return AppendSpan(rigidBodies, m_Buffer);
+}
+
+Result<>
+ResourceBundleBuilder::Append(const std::span<const CameraResource>& cameras)
+{
+    Header* h = GetHeader();
+    MLG_ASSERT(h != nullptr, "Header is not initialized");
+    MLG_ASSERT(h->CamerasOffset == kInvalidOffset, "Cameras already appended");
+
+    AppendPad<CameraResource>(m_Buffer);
+    h->CamerasOffset = static_cast<OffsetType>(m_Buffer.size());
+    h->CameraCount = static_cast<IndexType>(cameras.size());
+    return AppendSpan(cameras, m_Buffer);
 }
 
 Result<>

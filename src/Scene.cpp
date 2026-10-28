@@ -159,12 +159,14 @@ CollectNodes(const ResourceBundle& resourceBundle)
             parent = &nodes[nodeRsrc.ParentIndex];
         }
 
+        const std::string_view name = resourceBundle.GetStringView(nodeRsrc.Name);
+
         TrsTransformf transform;
         transform.T = nodeRsrc.LocalPos;
         transform.R = UnitQuatf(nodeRsrc.LocalRot);
         transform.S = nodeRsrc.LocalScale;
 
-        nodes.emplace_back(transform, parent);
+        nodes.emplace_back(SceneNode::NameType(name), transform, parent);
     }
 
     return nodes;
@@ -236,14 +238,14 @@ CollectModelNodes(const ResourceBundle& resourceBundle,
 Result<BoundedVector<PhysicsNode>>
 CollectPhysicsNodes(const WorldIdentifier worldId,
     const ResourceBundle& resourceBundle,
-    const std::span<SceneNode>& nodes)
+    const std::span<const SceneNode>& nodes)
 {
     const std::span rigidBodies = resourceBundle.GetRigidBodies();
     BoundedVector<PhysicsNode> physicsNodes(rigidBodies.size());
 
     for(const RigidBodyResource& rigidBody : rigidBodies)
     {
-        SceneNode& sceneNode = nodes[rigidBody.NodeIndex];
+        const SceneNode& sceneNode = nodes[rigidBody.NodeIndex];
 
         const std::span colliders = resourceBundle.GetColliders(rigidBody);
 
@@ -254,6 +256,24 @@ CollectPhysicsNodes(const WorldIdentifier worldId,
     }
 
     return physicsNodes;
+}
+
+Result<BoundedVector<CameraNode>>
+CollectCameraNodes(const ResourceBundle& resourceBundle, const std::span<const SceneNode>& nodes)
+{
+    const std::span cameras = resourceBundle.GetCameras();
+
+    MLG_CHECKV(!cameras.empty(), "No cameras found");
+
+    BoundedVector<CameraNode> cameraNodes(cameras.size());
+
+    for(const CameraResource& camera : cameras)
+    {
+        const SceneNode& sceneNode = nodes[camera.NodeIndex];
+        cameraNodes.emplace_back(sceneNode, ProjectionSettings{});
+    }
+
+    return cameraNodes;
 }
 
 b3BodyId
@@ -309,11 +329,15 @@ Scene::Create(const ResourceBundle& resourceBundle)
     auto physicsNodes = CollectPhysicsNodes(worldIdentifier, resourceBundle, *sceneNodes);
     MLG_CHECK(physicsNodes, "Failed to collect physics nodes");
 
+    auto cameraNodes = CollectCameraNodes(resourceBundle, *sceneNodes);
+    MLG_CHECK(cameraNodes, "Failed to collect camera nodes");
+
     cleanup.release();
 
     return std::unique_ptr<Scene>(new Scene(std::move(*sceneNodes),
         std::move(*physicsNodes),
         std::move(*modelNodes),
+        std::move(*cameraNodes),
         std::move(*meshes),
         worldIdentifier));
 }
@@ -321,11 +345,13 @@ Scene::Create(const ResourceBundle& resourceBundle)
 Scene::Scene(BoundedVector<SceneNode>&& nodes,
     BoundedVector<PhysicsNode>&& physicsNodes,
     BoundedVector<ModelNode>&& modelNodes,
+    BoundedVector<CameraNode>&& cameraNodes,
     BoundedVector<Mesh>&& meshes,
     const WorldIdentifier worldId)
     : m_Nodes(std::move(nodes)),
       m_PhysicsNodes(std::move(physicsNodes)),
       m_ModelNodes(std::move(modelNodes)),
+      m_CameraNodes(std::move(cameraNodes)),
       m_Meshes(std::move(meshes)),
       m_WorldId(worldId)
 {
@@ -344,6 +370,61 @@ Scene::~Scene()
     }
 }
 
+Result<CameraNode*>
+Scene::GetCameraNode(const std::string_view name)
+{
+    const SceneNode::NameType nodeName{name};
+
+    for(CameraNode& cameraNode : m_CameraNodes)
+    {
+        if(cameraNode.m_Node->GetName() == nodeName)
+        {
+            return &cameraNode;
+        }
+    }
+    
+    MLG_ERROR("Camera node not found: {}", name);
+
+    return Result<>::Fail;
+}
+
+Result<const CameraNode*>
+Scene::GetCameraNode(const std::string_view name) const
+{
+    const SceneNode::NameType nodeName{name};
+
+    for(const CameraNode& cameraNode : m_CameraNodes)
+    {
+        if(cameraNode.m_Node->GetName() == nodeName)
+        {
+            return &cameraNode;
+        }
+    }
+    
+    MLG_ERROR("Camera node not found: {}", name);
+
+    return Result<>::Fail;
+}
+
+Result<>
+Scene::SetActive(const PhysicsNode& physicsNode, bool active)
+{
+    MLG_CHECK(GetMutableNode(*physicsNode.m_Node), "Invalid or nonexistent node for physics node");
+
+    const b3BodyId bodyId = GetBodyId(physicsNode.m_RigidBodyId);
+
+    if(!active)
+    {
+        b3Body_Disable(bodyId);
+    }
+    else
+    {
+        b3Body_Enable(bodyId);
+    }
+
+    return Result<>::Ok;
+}
+
 void
 Scene::Update(const float timeStep)
 {
@@ -355,7 +436,12 @@ Scene::Update(const float timeStep)
     // Sync to scene nodes.
     for(const PhysicsNode& physicsNode : m_PhysicsNodes)
     {
-        SceneNode* node = physicsNode.m_Node;
+        SceneNode* node = GetMutableNode(*physicsNode.m_Node);
+        if(!MLG_VERIFY(node, "Invalid or nonexistent node for physics node"))
+        {
+            continue;
+        }
+
         const b3BodyId bodyId = GetBodyId(physicsNode.m_RigidBodyId);
         const b3Pos pos = b3Body_GetPosition(bodyId);
         const b3Quat rot = b3Body_GetRotation(bodyId);
@@ -371,45 +457,18 @@ Scene::Update(const float timeStep)
         node->m_AngularVelocity = Vec3f{ angVel.x, angVel.y, angVel.z };
     }
 
+    for(const CameraNode& cameraNode : m_CameraNodes)
+    {
+        SceneNode* node = GetMutableNode(*cameraNode.m_Node);
+        if(!MLG_VERIFY(node, "Invalid or nonexistent node for camera node"))
+        {
+            continue;
+        }
+
+        node->m_LocalTransform = cameraNode.GetTargetLocalTransform().ToTrsTransform();
+    }
+
     UpdateWorldTransforms();
-}
-
-void
-Scene::SetActive(const SceneNode& nodeRef, bool active)
-{
-    SceneNode* node = GetMutableNode(nodeRef);
-    
-    if(!MLG_VERIFY(node, "Invalid or nonexistent node passed to SetActive"))
-    {
-        return;
-    }
-
-    node->m_Flags = active ? (node->m_Flags | SceneNode::Flags::Active)
-                           : (node->m_Flags & ~SceneNode::Flags::Active);
-
-    for(const auto& childNode : node->m_Children)
-    {
-        SetActive(childNode, active);
-    }
-}
-
-void
-Scene::SetVisible(const SceneNode& nodeRef, bool visible)
-{
-    SceneNode* node = GetMutableNode(nodeRef);
-
-    if(!MLG_VERIFY(node, "Invalid or nonexistent node passed to SetVisible"))
-    {
-        return;
-    }
-
-    node->m_Flags = visible ? (node->m_Flags | SceneNode::Flags::Visible)
-                            : (node->m_Flags & ~SceneNode::Flags::Visible);
-
-    for(const auto& childNode : node->m_Children)
-    {
-        SetVisible(childNode, visible);
-    }
 }
 
 // private:

@@ -6,6 +6,7 @@
 #include <numbers>
 
 class InputMapper;
+class CameraNode;
 
 class CameraActor
 {
@@ -16,13 +17,13 @@ public:
 
     CameraActor() = delete;
 
-    explicit CameraActor(InputMapper& inputMapper);
+    explicit CameraActor(InputMapper& inputMapper, CameraNode& cameraNode);
 
     void Update(const InputMapper& inputMapper, const float deltaSeconds);
 
     void SetTransform(const TrTransformf& transform);
 
-    const TrTransformf& GetTransform() const { return m_CurrentTransform; }
+    TrTransformf GetTransform() const;
 
     const ProjectionSettings& GetProjectionSettings() const { return m_ProjectionSettings; }
 
@@ -36,7 +37,8 @@ private:
         return UnitQuatf(Radiansf(rot), axis);
     }
 
-    TrTransformf m_CurrentTransform = TrTransformf::Identity;
-    TrTransformf m_TargetTransform = TrTransformf::Identity;
+    CameraNode* m_CameraNode{ nullptr };
+
+    TrTransformf m_TargetTransform = TrTransformf::Identity();
     ProjectionSettings m_ProjectionSettings;
 };

@@ -90,6 +90,10 @@ Architecture conformance is not blind uniformity. Different constraints may
 justify different implementations. Record the relevant forces and tradeoffs
 rather than forcing superficial similarity.
 
+When reviewing or changing the resource bundle, flag any compatibility-affecting
+format change that does not also update the resource-bundle version. This
+includes serialized layout and interpretation changes.
+
 ## Documentation continuity
 
 During read-only work, report architecture documentation that appears stale,

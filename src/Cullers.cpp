@@ -61,11 +61,6 @@ ModelCuller::iterator::Evaluate()
 
     for(; m_It != m_End && !m_CurrentValue.has_value(); ++m_It)
     {
-        if(!m_It->IsVisible())
-        {
-            continue;
-        }
-
         const BoundingSphere wsBounds = m_It->GetWorldTransform() * m_It->GetLocalSpaceBoundingSphere();
 
         const Frustum::ContainsResult containsResult = m_Culler->m_Frustum.Contains(wsBounds);

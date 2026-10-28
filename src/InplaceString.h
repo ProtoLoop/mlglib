@@ -146,6 +146,16 @@ public:
         return std::string_view(a) <=> std::string_view(b);
     }
 
+    friend auto operator<=>(const InplaceString& a, const std::string_view b)
+    {
+        return std::string_view(a) <=> b;
+    }
+
+    friend auto operator<=>(const std::string_view a, const InplaceString& b)
+    {
+        return a <=> std::string_view(b);
+    }
+
     friend bool operator==(const InplaceString& a, const InplaceString& b)
     {
         if(a.GetHashCode() == b.GetHashCode())
@@ -156,7 +166,19 @@ public:
         return false;
     }
 
+    friend bool operator==(const InplaceString& a, const std::string_view b)
+    {
+        return std::string_view(a) == b;
+    }
+
+    friend bool operator==(const std::string_view a, const InplaceString& b)
+    {
+        return a == std::string_view(b);
+    }
+
     friend bool operator!=(const InplaceString& a, const InplaceString& b) { return !(a == b); }
+    friend bool operator!=(const InplaceString& a, const std::string_view b) { return !(a == b); }
+    friend bool operator!=(const std::string_view a, const InplaceString& b) { return !(a == b); }
     
     static constexpr size_t Hash(const std::string_view str) noexcept
     {

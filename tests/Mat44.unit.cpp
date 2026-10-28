@@ -21,7 +21,7 @@ namespace
 
 TEST(Mat44f, Identity)
 {
-    const Mat44f& I = Mat44f::Identity;
+    const Mat44f& I = Mat44f::Identity();
 
     EXPECT_FLOAT_EQ(I[0][0], 1.0f);
     EXPECT_FLOAT_EQ(I[1][1], 1.0f);
@@ -102,7 +102,7 @@ TEST(Mat44f, Multiply_Matrix)
         13.0f, 14.0f, 15.0f, 16.0f
     );
 
-    const Mat44f& I = Mat44f::Identity;
+    const Mat44f& I = Mat44f::Identity();
     const Mat44f C = A * I;
 
     EXPECT_TRUE(C == A);
@@ -327,7 +327,7 @@ TEST(Mat44f, Decompose_Trs)
 
 TEST(Mat44f, Inverse_Identity)
 {
-    const Mat44f& I = Mat44f::Identity;
+    const Mat44f& I = Mat44f::Identity();
     const Mat44f inv = I.Inverse();
     EXPECT_TRUE(inv == I);
 }
@@ -452,7 +452,7 @@ TEST(Mat44f, InverseAffine_NonInvertible)
 TEST(Mat44f, InverseAffine_TranslationOnly)
 {
     // Affine matrix with only translation
-    Mat44f M = Mat44f::Identity;
+    Mat44f M = Mat44f::Identity();
     M[3][0] = 10.0f;
     M[3][1] = -5.0f;
     M[3][2] = 2.5f;

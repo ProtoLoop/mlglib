@@ -6,6 +6,7 @@
 #include "InputMapper.h"
 #include "Level.h"
 #include "PerfMetrics.h"
+#include "Scene.h"
 #include "System.h"
 #include "SystemCreateTask.h"
 #include "VecMath.h"
@@ -143,17 +144,22 @@ MainLoop()
     const std::unique_ptr<Level> level = std::move(*loadResult);
 
     View& view = level->GetView();
-
-    static constexpr float kDefaultCameraHeight = 2.0f;
-    static constexpr float kDefaultCameraYaw = 90.0f; // Degrees
-
-    const Radiansf cameraYaw = Radiansf::FromDegrees(kDefaultCameraYaw);
+    Scene& scene = level->GetScene();
 
     const GpuHelper& gpuHelper = system->GetGpuHelper();
 
-    CameraActor cameraActor(system->GetInputMapper());
-    cameraActor.SetTransform(
-        TrTransformf{ .T{ 0, kDefaultCameraHeight, 0 }, .R{ cameraYaw, Vec3f::YAXIS() } });
+    auto cameraNodeResult = scene.GetCameraNode("DefaultCamera");
+    MLG_CHECK(cameraNodeResult, "Failed to get default camera node");
+    CameraActor cameraActor(system->GetInputMapper(), *cameraNodeResult.Value());
+
+    constexpr float kDefaultCameraHeight = 2.0f;
+    constexpr float kDefaultCameraYaw = 90.0f; // Degrees
+
+    const Radiansf cameraYaw = Radiansf::FromDegrees(kDefaultCameraYaw);
+    const UnitQuatf cameraRot = UnitQuatf(cameraYaw, Vec3f::YAXIS());
+    const Vec3f cameraPos{ 0, kDefaultCameraHeight, 0 };
+
+    cameraActor.SetTransform(TrTransformf{ .R = cameraRot, .T = cameraPos });
 
     constexpr ActionMapping actionMappings[] //
         {
@@ -219,6 +225,8 @@ MainLoop()
         {
             cameraActor.Update(inputMapper, elapsedSeconds);
         }
+
+        scene.Update(elapsedSeconds);
 
         auto target = gpuHelper.GetSwapChainTexture();
         MLG_CHECKV(target, "Failed to get swap chain texture");

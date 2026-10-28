@@ -1,7 +1,7 @@
 #include "CameraActor.h"
 
 #include "CommonActionIds.h"
-#include "Frustum.h"
+#include "SceneTypes.h"
 
 #include <SDL3/SDL_events.h>
 
@@ -58,7 +58,8 @@ constexpr ActionMapping actionMappings[] //
     };
 }
 
-CameraActor::CameraActor(InputMapper& inputMapper)
+CameraActor::CameraActor(InputMapper& inputMapper, CameraNode& cameraNode)
+    : m_CameraNode(&cameraNode)
 {
     MLG_ABORTIF(!inputMapper.AddActionMappings(actionMappings), "Failed to add action mappings");
 }
@@ -68,10 +69,10 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
 {
     float actionValue = 0;
 
-    UnitQuatf yaw = UnitQuatf::Identity, pitch = UnitQuatf::Identity;
+    UnitQuatf yaw = UnitQuatf::Identity(), pitch = UnitQuatf::Identity();
     Vec3f moveDelta(0);
 
-    TrTransformf curXform = m_CurrentTransform;
+    TrTransformf curXform = m_CameraNode->GetLocalTransform();
 
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveForward, actionValue))
     {
@@ -124,12 +125,18 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
     // m_CurrentTransform.R = m_CurrentTransform.R.Lerp(m_TargetTransform.R, dtR);
     curXform.R = m_TargetTransform.R;
 
-    m_CurrentTransform = curXform;
+    m_CameraNode->SetTargetLocalTransform(curXform);
 }
 
 void
 CameraActor::SetTransform(const TrTransformf& transform)
 {
-    m_CurrentTransform = transform;
     m_TargetTransform = transform;
+    m_CameraNode->SetTargetLocalTransform(transform);
+}
+
+TrTransformf
+CameraActor::GetTransform() const
+{
+    return m_CameraNode->GetLocalTransform();
 }

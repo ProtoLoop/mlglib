@@ -18,7 +18,7 @@ GetBodyId(const RigidBodyIdentifier rigidBodyId)
 
 /// PhysicsNode
 
-PhysicsNode::PhysicsNode(SceneNode& node, const RigidBodyIdentifier rigidBodyId)
+PhysicsNode::PhysicsNode(const SceneNode& node, const RigidBodyIdentifier rigidBodyId)
     : m_Node(&node),
       m_RigidBodyId(rigidBodyId)
 {
@@ -121,4 +121,14 @@ ModelNode::ModelNode(const SceneNode& node,
       m_Meshes(meshes),
       m_FirstMeshInstanceIndex(firstMeshInstanceIndex)
 {
+}
+
+/// CameraNode
+
+CameraNode::CameraNode(const SceneNode& node, const ProjectionSettings& projectionSettings)
+    : m_Node(&node),
+      m_TargetLocalTransform(node.GetLocalTransform().ToTrTransform()),
+      m_ProjectionSettings(projectionSettings)
+{
+    MLG_ASSERT(!node.GetParent(), "CameraNode must be associated with a root SceneNode");
 }

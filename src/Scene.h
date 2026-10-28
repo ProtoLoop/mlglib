@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <span>
+#include <string_view>
 
 class ResourceBundle;
 
@@ -32,16 +33,18 @@ public:
     std::span<const ModelNode> GetAllModelNodes() const { return m_ModelNodes; }
     std::span<ModelNode> GetAllModelNodes() { return m_ModelNodes; }
 
+    Result<CameraNode*> GetCameraNode(const std::string_view name);
+    Result<const CameraNode*> GetCameraNode(const std::string_view name) const;
+
+    Result<> SetActive(const PhysicsNode& physicsNode, bool active);
+
     void Update(const float timeStep);
-
-    void SetActive(const SceneNode& node, bool active);
-
-    void SetVisible(const SceneNode& node, bool visible);
 
 private:
     Scene(BoundedVector<SceneNode>&& nodes,
         BoundedVector<PhysicsNode>&& physicsNodes,
         BoundedVector<ModelNode>&& modelNodes,
+        BoundedVector<CameraNode>&& cameraNodes,
         BoundedVector<Mesh>&& meshes,
         const WorldIdentifier worldId);
 
@@ -52,6 +55,7 @@ private:
     BoundedVector<SceneNode> m_Nodes;
     BoundedVector<PhysicsNode> m_PhysicsNodes;
     BoundedVector<ModelNode> m_ModelNodes;
+    BoundedVector<CameraNode> m_CameraNodes;
     BoundedVector<Mesh> m_Meshes;
     WorldIdentifier m_WorldId;
 };
