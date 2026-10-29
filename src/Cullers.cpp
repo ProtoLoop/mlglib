@@ -61,7 +61,7 @@ ModelCuller::iterator::Evaluate()
 
     for(; m_It != m_End && !m_CurrentValue.has_value(); ++m_It)
     {
-        const BoundingSphere wsBounds = m_It->GetWorldTransform() * m_It->GetLocalSpaceBoundingSphere();
+        const BoundingSphere wsBounds = m_It->GetWsMatrix() * m_It->GetLocalSpaceBoundingSphere();
 
         const Frustum::ContainsResult containsResult = m_Culler->m_Frustum.Contains(wsBounds);
 
@@ -124,7 +124,7 @@ MeshCuller::iterator::iterator(const MeshCuller& culler)
     : m_Culler(&culler),
       m_It(culler.m_ModelNode->GetMeshes().begin()),
       m_End(culler.m_ModelNode->GetMeshes().end()),
-      m_WorldTransform(culler.m_ModelNode->GetWorldTransform()),
+      m_WsMatrix(culler.m_ModelNode->GetWsMatrix()),
       m_InstanceIndex(culler.m_ModelNode->GetFirstMeshInstanceIndex())
 {
     Evaluate();
@@ -146,7 +146,7 @@ MeshCuller::iterator::Evaluate()
 
     for(; m_It != m_End && !m_CurrentValue.has_value(); ++m_It, ++m_InstanceIndex)
     {
-        const BoundingSphere wsBounds = m_WorldTransform * m_It->GetBoundingSphere();
+        const BoundingSphere wsBounds = m_WsMatrix * m_It->GetBoundingSphere();
 
         const Frustum::ContainsResult containsResult =
             parentInside ? Frustum::ContainsResult::Inside : m_Culler->m_Frustum.Contains(wsBounds);

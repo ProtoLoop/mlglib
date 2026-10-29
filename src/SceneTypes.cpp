@@ -4,8 +4,8 @@
 
 /// PhysicsNode
 
-PhysicsNode::PhysicsNode(const RootSceneNode& rootNode, const RigidBodyIdentifier rigidBodyId)
-    : m_RootNode(&rootNode),
+PhysicsNode::PhysicsNode(RootNodeData& rootNodeData, const RigidBodyIdentifier rigidBodyId)
+    : m_RootNodeData(&rootNodeData),
       m_RigidBodyId(rigidBodyId)
 {
 }
@@ -37,13 +37,13 @@ PhysicsNode::AddForce(const Vec3f& force)
 Vec3f
 PhysicsNode::GetPosition() const
 {
-    return m_RootNode->GetLocalTransform().T;
+    return m_RootNodeData->m_LocalTransform.T;
 }
 
 UnitQuatf
 PhysicsNode::GetRotation() const
 {
-    return m_RootNode->GetLocalTransform().R;
+    return m_RootNodeData->m_LocalTransform.R;
 }
 
 Vec3f
@@ -105,9 +105,10 @@ ModelNode::ModelNode(const SceneNode& node,
 
 /// CameraNode
 
-CameraNode::CameraNode(const RootSceneNode& node, const ProjectionSettings& projectionSettings)
-    : m_RootNode(&node),
-      m_TargetLocalTransform(node.GetLocalTransform()),
+CameraNode::CameraNode(RootNodeData& rootNodeData, const ProjectionSettings& projectionSettings)
+    : m_RootNodeData(&rootNodeData),
+      m_TargetLocalTransform(rootNodeData.m_LocalTransform),
       m_ProjectionSettings(projectionSettings)
 {
+    MLG_ASSERT(rootNodeData.m_SceneNode, "Invalid root node data");
 }

@@ -293,6 +293,21 @@ private:
     uint64_t m_SortKey{ 0 };
 };
 
+class SceneNode;
+
+struct RootNodeData
+{
+    SceneNode* m_SceneNode{ nullptr };
+    TrTransformf m_LocalTransform;
+};
+
+struct ChildNodeData
+{
+    SceneNode* m_SceneNode{ nullptr };
+    TrsTransformf m_LocalTransform;
+    const SceneNode* m_Parent{ nullptr };
+};
+
 /// Represents a node within the scene graph, including its local and world transforms,
 /// and hierarchical relationships.
 /// Note that the name of the node is stored as a string view and must remain valid for the lifetime
@@ -303,22 +318,34 @@ public:
     SceneNode(
         const std::string_view name, const TrsTransformf& localTransform, const SceneNode& parent)
         : m_Name(name),
-          m_LocalTransform(localTransform),
-          m_Parent(&parent)
+          m_NodeData(ChildNodeData //
+              {
+                  .m_SceneNode = this,
+                  .m_LocalTransform = localTransform,
+                  .m_Parent = &parent,
+              })
     {
     }
 
     SceneNode(
         const std::string_view name, const TrTransformf& localTransform, const SceneNode& parent)
         : m_Name(name),
-          m_LocalTransform(localTransform.ToTrsTransform()),
-          m_Parent(&parent)
+          m_NodeData(ChildNodeData //
+              {
+                  .m_SceneNode = this,
+                  .m_LocalTransform = localTransform.ToTrsTransform(),
+                  .m_Parent = &parent,
+              })
     {
     }
 
     SceneNode(const std::string_view name, const TrTransformf& localTransform)
         : m_Name(name),
-          m_LocalTransform(localTransform.ToTrsTransform())
+          m_NodeData(RootNodeData //
+              {
+                  .m_SceneNode = this,
+                  .m_LocalTransform = localTransform,
+              })
     {
     }
 
@@ -330,100 +357,65 @@ public:
     SceneNode& operator=(SceneNode&&) = delete;
 
     std::string_view GetName() const { return m_Name; }
-    const TrsTransformf& GetLocalTransform() const { return m_LocalTransform; }
+    TrsTransformf GetLocalTransform() const
+    {
+        if(std::holds_alternative<RootNodeData>(m_NodeData))
+        {
+            return std::get<RootNodeData>(m_NodeData).m_LocalTransform.ToTrsTransform();
+        }
+        return std::get<ChildNodeData>(m_NodeData).m_LocalTransform;
+    }
+
     const Mat44f& GetWsMatrix() const { return m_WsMatrix; }
-    const SceneNode* GetParent() const { return m_Parent; }
+    const SceneNode* GetParent() const
+    {
+        if(std::holds_alternative<ChildNodeData>(m_NodeData))
+        {
+            return std::get<ChildNodeData>(m_NodeData).m_Parent;
+        }
+        return nullptr;
+    }
+
+    Result<RootNodeData*> GetRootNodeData()
+    {
+        MLG_CHECKV(std::holds_alternative<RootNodeData>(m_NodeData),
+            "Node does not contain root node data");
+        return &std::get<RootNodeData>(m_NodeData);
+    }
 
 private:
     friend class Scene;
+
+    Result<> SetLocalTransform(const TrTransformf& localTransform)
+    {
+        if(std::holds_alternative<RootNodeData>(m_NodeData))
+        {
+            std::get<RootNodeData>(m_NodeData).m_LocalTransform = localTransform;
+            return Result<>::Ok;
+        }
+        if(std::holds_alternative<ChildNodeData>(m_NodeData))
+        {
+            std::get<ChildNodeData>(m_NodeData).m_LocalTransform = localTransform.ToTrsTransform();
+            return Result<>::Ok;
+        }
+
+        MLG_ERROR("Invalid node data");
+        return Result<>::Fail;
+    }
+
+    Result<> SetLocalTransform(const TrsTransformf& localTransform)
+    {
+        MLG_CHECKV(std::holds_alternative<ChildNodeData>(m_NodeData),
+            "Node does not contain a child node");
+
+        std::get<ChildNodeData>(m_NodeData).m_LocalTransform = localTransform;
+        return Result<>::Ok;
+    }
 
     std::string_view m_Name;
-    TrsTransformf m_LocalTransform;
+    std::variant<RootNodeData, ChildNodeData> m_NodeData;
     Mat44f m_WsMatrix{ 1 };
-    const SceneNode* m_Parent{ nullptr };
     std::span<SceneNode> m_Children;
-};
-
-/// Represents a root node within the scene graph, which must not have a parent.
-/// Root nodes also do not have scale in their transforms.
-class RootSceneNode
-{
-    // Used to give ctor access only to friend classes.
-    struct PassKey
-    {
-    private:
-        friend class Scene;
-        PassKey() = default;
-    };
-
-public:
-    RootSceneNode() = delete;
-    ~RootSceneNode() = default;
-    RootSceneNode(const RootSceneNode&) = delete;
-    RootSceneNode& operator=(const RootSceneNode&) = delete;
-    RootSceneNode(RootSceneNode&&) = delete;
-    RootSceneNode& operator=(RootSceneNode&&) = delete;
-
-    explicit RootSceneNode(SceneNode& sceneNode, const PassKey)
-        : m_SceneNode(&sceneNode)
-    {
-        MLG_ASSERT(sceneNode.GetParent() == nullptr, "RootSceneNode must not have a parent");
-    }
-
-    const SceneNode& GetSceneNode() const { return *m_SceneNode; }
-
-    std::string_view GetName() const { return m_SceneNode->GetName(); }
-
-    TrTransformf GetLocalTransform() const
-    {
-        return m_SceneNode->GetLocalTransform().ToTrTransform();
-    }
-
-    const Mat44f& GetWsMatrix() const { return m_SceneNode->GetWsMatrix(); }
-
-private:
-    friend class Scene;
-
-    SceneNode* m_SceneNode{ nullptr };
-};
-
-/// Represents a child node within the scene graph, which must have a valid parent.
-/// Child nodes can have scale in their transforms.
-class ChildSceneNode
-{
-    // Used to give ctor access only to friend classes.
-    struct PassKey
-    {
-    private:
-        friend class Scene;
-        PassKey() = default;
-    };
-
-public:
-    ChildSceneNode() = delete;
-    ~ChildSceneNode() = default;
-    ChildSceneNode(const ChildSceneNode&) = delete;
-    ChildSceneNode& operator=(const ChildSceneNode&) = delete;
-    ChildSceneNode(ChildSceneNode&&) = delete;
-    ChildSceneNode& operator=(ChildSceneNode&&) = delete;
-
-    explicit ChildSceneNode(SceneNode& sceneNode, const PassKey)
-        : m_SceneNode(&sceneNode)
-    {
-        MLG_ASSERT(sceneNode.GetParent() != nullptr, "ChildSceneNode must have a valid parent");
-    }
-
-    const SceneNode& GetSceneNode() const { return *m_SceneNode; }
-
-    std::string_view GetName() const { return m_SceneNode->GetName(); }
-    const TrsTransformf& GetLocalTransform() const { return m_SceneNode->GetLocalTransform(); }
-    const Mat44f& GetWsMatrix() const { return m_SceneNode->GetWsMatrix(); }
-    const SceneNode* GetParent() const { return m_SceneNode->GetParent(); }
-
-private:
-    friend class Scene;
-
-    SceneNode* m_SceneNode{ nullptr };
 };
 
 /// Represents a node in the scene to which physics can be applied.
@@ -432,7 +424,7 @@ private:
 class PhysicsNode
 {
 public:
-    PhysicsNode(const RootSceneNode& rootNode, const RigidBodyIdentifier rigidBodyId);
+    PhysicsNode(RootNodeData& rootNodeData, const RigidBodyIdentifier rigidBodyId);
 
     PhysicsNode() = delete;
     ~PhysicsNode() = default;
@@ -441,7 +433,7 @@ public:
     PhysicsNode(PhysicsNode&&) = delete;
     PhysicsNode& operator=(PhysicsNode&&) = delete;
 
-    std::string_view GetName() const { return m_RootNode->GetName(); }
+    std::string_view GetName() const { return m_RootNodeData->m_SceneNode->GetName(); }
 
     void ApplyImpulse(const Vec3f& impulse);
 
@@ -466,9 +458,7 @@ public:
 private:
     friend class Scene;
 
-    const SceneNode& GetSceneNode() const { return m_RootNode->GetSceneNode(); }
-
-    const RootSceneNode* m_RootNode{ nullptr };
+    RootNodeData* m_RootNodeData{ nullptr };
     RigidBodyIdentifier m_RigidBodyId;
 };
 
@@ -500,7 +490,7 @@ public:
 
     std::string_view GetName() const { return m_Node->GetName(); }
 
-    const Mat44f& GetWorldTransform() const { return m_Node->GetWsMatrix(); }
+    const Mat44f& GetWsMatrix() const { return m_Node->GetWsMatrix(); }
 
     const BoundingSphere& GetLocalSpaceBoundingSphere() const { return m_LocalSpaceBoundingSphere; }
 
@@ -513,8 +503,6 @@ public:
 
 private:
     friend class Scene;
-
-    const SceneNode& GetSceneNode() const { return *m_Node; }
 
     const SceneNode* m_Node{ nullptr };
     BoundingSphere m_LocalSpaceBoundingSphere;
@@ -529,7 +517,7 @@ private:
 class CameraNode
 {
 public:
-    CameraNode(const RootSceneNode& rootNode, const ProjectionSettings& projectionSettings);
+    CameraNode(RootNodeData& rootNodeData, const ProjectionSettings& projectionSettings);
 
     CameraNode() = delete;
     ~CameraNode() = default;
@@ -538,13 +526,11 @@ public:
     CameraNode(CameraNode&&) = delete;
     CameraNode& operator=(CameraNode&&) = delete;
 
-    std::string_view GetName() const { return m_RootNode->GetName(); }
+    std::string_view GetName() const { return m_RootNodeData->m_SceneNode->GetName(); }
 
-    const Mat44f& GetWorldTransform() const { return m_RootNode->GetWsMatrix(); }
+    const TrTransformf& GetLocalTransform() const { return m_RootNodeData->m_LocalTransform; }
 
-    TrTransformf GetLocalTransform() const { return m_RootNode->GetLocalTransform(); }
-
-    TrTransformf GetTargetLocalTransform() const { return m_TargetLocalTransform; }
+    const TrTransformf& GetTargetLocalTransform() const { return m_TargetLocalTransform; }
 
     void SetTargetLocalTransform(const TrTransformf& transform)
     {
@@ -556,9 +542,7 @@ public:
 private:
     friend class Scene;
 
-    const SceneNode& GetSceneNode() const { return m_RootNode->GetSceneNode(); }
-
-    const RootSceneNode* m_RootNode{ nullptr };
+    RootNodeData* m_RootNodeData{ nullptr };
     TrTransformf m_TargetLocalTransform;
     ProjectionSettings m_ProjectionSettings;
 };

@@ -170,7 +170,7 @@ public:
         const MeshCuller* m_Culler{ nullptr };
         value_iterator m_It;
         value_iterator m_End;
-        Mat44f m_WorldTransform{ 1 };
+        Mat44f m_WsMatrix{ 1 };
         std::optional<value_type> m_CurrentValue;
         uint32_t m_InstanceIndex{ 0 };
     };

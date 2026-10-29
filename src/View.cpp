@@ -332,7 +332,7 @@ View::SyncToGpu()
     uint64_t bufferOffset = 0;
     for(const ModelNode& modelNode : m_Scene->GetAllModelNodes())
     {
-        const ShaderInterop::WorldTransform transform{ .Transform = modelNode.GetWorldTransform() };
+        const ShaderInterop::WorldTransform transform{ .Transform = modelNode.GetWsMatrix() };
         m_GpuHelper->GetDevice().GetQueue().WriteBuffer(m_WorldTransformBuffer.GetGpuBuffer(),
             bufferOffset,
             &transform,
