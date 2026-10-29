@@ -148,9 +148,8 @@ MainLoop()
 
     const GpuHelper& gpuHelper = system->GetGpuHelper();
 
-    auto cameraNodeResult = scene.GetDefaultCameraNode();
-    MLG_CHECK(cameraNodeResult, "Failed to get default camera node");
-    CameraActor cameraActor(system->GetInputMapper(), *cameraNodeResult.Value());
+    CameraNode& cameraNode = scene.GetAllCameraNodes().front();
+    CameraActor cameraActor(system->GetInputMapper(), cameraNode);
 
     constexpr float kDefaultCameraHeight = 2.0f;
     constexpr float kDefaultCameraYaw = 90.0f; // Degrees
@@ -159,7 +158,8 @@ MainLoop()
     const UnitQuatf cameraRot = UnitQuatf(cameraYaw, Vec3f::YAXIS());
     const Vec3f cameraPos{ 0, kDefaultCameraHeight, 0 };
 
-    cameraActor.SetTransform(TrTransformf{ .R = cameraRot, .T = cameraPos });
+    cameraActor.SetLocation(cameraPos);
+    cameraActor.SetRotation(cameraRot);
 
     constexpr ActionMapping actionMappings[] //
         {

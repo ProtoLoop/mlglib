@@ -72,48 +72,49 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
     UnitQuatf yaw = UnitQuatf::Identity(), pitch = UnitQuatf::Identity();
     Vec3f moveDelta(0);
 
-    TrTransformf curXform = m_CameraNode->GetLocalTransform();
+    UnitQuatf curRot = m_CameraNode->GetRotation();
+    Vec3f curPos = m_CameraNode->GetLocation();
 
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveForward, actionValue))
     {
-        moveDelta += curXform.R * Vec3f(0, 0, actionValue);
+        moveDelta += curRot * Vec3f(0, 0, actionValue);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveBackward, actionValue))
     {
-        moveDelta += curXform.R * Vec3f(0, 0, actionValue);
+        moveDelta += curRot * Vec3f(0, 0, actionValue);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveLeft, actionValue))
     {
-        moveDelta += curXform.R * Vec3f(actionValue, 0, 0);
+        moveDelta += curRot * Vec3f(actionValue, 0, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveRight, actionValue))
     {
-        moveDelta += curXform.R * Vec3f(actionValue, 0, 0);
+        moveDelta += curRot * Vec3f(actionValue, 0, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveUp, actionValue))
     {
-        moveDelta += curXform.R * Vec3f(0, actionValue, 0);
+        moveDelta += curRot * Vec3f(0, actionValue, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveDown, actionValue))
     {
-        moveDelta += curXform.R * Vec3f(0, actionValue, 0);
+        moveDelta += curRot * Vec3f(0, actionValue, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveUpDown, actionValue))
     {
-        moveDelta += curXform.R * Vec3f(0, actionValue, 0);
+        moveDelta += curRot * Vec3f(0, actionValue, 0);
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::LookLeftRight, actionValue))
     {
         yaw = ClampRot(actionValue, Vec3f::YAXIS());
-        m_TargetTransform.R = yaw * m_TargetTransform.R;
+        m_TargetRotation = yaw * m_TargetRotation;
     }
     if(inputMapper.IsActionTriggered(CommonActionIds::LookUpDown, actionValue))
     {
         pitch = ClampRot(actionValue, Vec3f::XAXIS());
-        m_TargetTransform.R = m_TargetTransform.R * pitch;
+        m_TargetRotation = m_TargetRotation * pitch;
     }
 
-    m_TargetTransform.T += moveDelta * kDefaultMovePerSec * deltaSeconds;
+    m_TargetLocation += moveDelta * kDefaultMovePerSec * deltaSeconds;
 
     constexpr float kTransformTimeToTarget = 0.1f;
     // constexpr float kRotationTimeToTarget = 0.01f;
@@ -121,22 +122,24 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
     const float dtT = deltaSeconds / kTransformTimeToTarget;
     // const float dtR = deltaSeconds / kRotationTimeToTarget;
 
-    curXform.T = curXform.T.Lerp(m_TargetTransform.T, dtT);
+    curPos = curPos.Lerp(m_TargetLocation, dtT);
     // m_CurrentTransform.R = m_CurrentTransform.R.Lerp(m_TargetTransform.R, dtR);
-    curXform.R = m_TargetTransform.R;
+    curRot = m_TargetRotation;
 
-    m_CameraNode->SetTargetLocalTransform(curXform);
+    m_CameraNode->SetLocation(curPos);
+    m_CameraNode->SetRotation(curRot);
 }
 
 void
-CameraActor::SetTransform(const TrTransformf& transform)
+CameraActor::SetLocation(const Vec3f& location)
 {
-    m_TargetTransform = transform;
-    m_CameraNode->SetTargetLocalTransform(transform);
+    m_TargetLocation = location;
+    m_CameraNode->SetLocation(location);
 }
 
-TrTransformf
-CameraActor::GetTransform() const
+void
+CameraActor::SetRotation(const UnitQuatf& rotation)
 {
-    return m_CameraNode->GetLocalTransform();
+    m_TargetRotation = rotation;
+    m_CameraNode->SetRotation(rotation);
 }

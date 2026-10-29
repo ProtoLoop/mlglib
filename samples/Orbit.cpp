@@ -608,14 +608,13 @@ MainLoop()
 
     ApplyRandomVelocities(scene);
 
-    auto cameraNodeResult = scene.GetDefaultCameraNode();
-    MLG_CHECK(cameraNodeResult, "Failed to get default camera node");
-    CameraActor cameraActor(system->GetInputMapper(), *cameraNodeResult.Value());
+    CameraNode& cameraNode = scene.GetAllCameraNodes().front();
+    CameraActor cameraActor(system->GetInputMapper(), cameraNode);
 
     constexpr float kInitialCameraDistance = 40.0f;
-    const Vec3f cameraPos{ 0, 0, -kInitialCameraDistance };
+    constexpr Vec3f kInitialCameraPos{ 0, 0, -kInitialCameraDistance };
 
-    cameraActor.SetTransform(TrTransformf{ .T = cameraPos });
+    cameraActor.SetLocation(kInitialCameraPos);
 
     bool pauseSim = false;
 

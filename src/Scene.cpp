@@ -173,12 +173,24 @@ CalculateStringStorage(const ResourceBundle& resourceBundle)
     return totalSize;
 }
 
+/// Collects all scene nodes from the resource bundle and stores their names in the provided string
+/// storage. If there are no camera nodes, a node will be added to which a camera can attach.
 Result<BoundedVector<SceneNode>>
 CollectNodes(const ResourceBundle& resourceBundle, BoundedVector<char>& stringStorage)
 {
     const std::span nodeRsrcs = resourceBundle.GetNodes();
 
-    BoundedVector<SceneNode> nodes(nodeRsrcs.size());
+    const bool haveCameras = !resourceBundle.GetCameras().empty();
+
+    size_t nodeCount = nodeRsrcs.size();
+    if(!haveCameras)
+    {
+        // If there are no cameras, we reserve capacity for adding a default camera node.
+        // The node will be added later.
+        nodeCount += 1;
+    }
+
+    BoundedVector<SceneNode> nodes(nodeCount);
 
     for(const auto& nodeRsrc : nodeRsrcs)
     {
@@ -291,18 +303,20 @@ CollectPhysicsNodes(const WorldIdentifier worldId,
 
     for(const RigidBodyResource& rigidBody : rigidBodies)
     {
-        SceneNode& sceneNode = nodes[rigidBody.NodeIndex];
+        const SceneNode& sceneNode = nodes[rigidBody.NodeIndex];
 
-        auto rootNodeDataResult = sceneNode.GetRootNodeData();
-        MLG_CHECKV(rootNodeDataResult, "Failed to get root node data for physics node");
+        MLG_CHECKV(sceneNode.GetParent() == nullptr,
+            "PhysicsNode must be attached to a root scene node");
 
         const std::span colliders = resourceBundle.GetColliders(rigidBody);
 
-        auto bodyId =
-            CreateRigidBody(rigidBody, rootNodeDataResult->m_LocalTransform, colliders, worldId);
+        auto bodyId = CreateRigidBody(rigidBody,
+            sceneNode.GetTransform().ToTrTransform(),
+            colliders,
+            worldId);
         MLG_CHECK(bodyId, "Failed to create rigid body for node");
 
-        physicsNodes.emplace_back(*rootNodeDataResult.Value(), *bodyId);
+        physicsNodes.emplace_back(sceneNode, *bodyId);
     }
 
     return physicsNodes;
@@ -313,18 +327,13 @@ CollectCameraNodes(const ResourceBundle& resourceBundle, const std::span<SceneNo
 {
     const std::span cameras = resourceBundle.GetCameras();
 
-    MLG_CHECKV(!cameras.empty(), "No cameras found");
-
     BoundedVector<CameraNode> cameraNodes(cameras.size());
 
     for(const CameraResource& camera : cameras)
     {
         SceneNode& sceneNode = nodes[camera.NodeIndex];
 
-        auto rootNodeDataResult = sceneNode.GetRootNodeData();
-        MLG_CHECKV(rootNodeDataResult, "Failed to get root node data for camera node");
-
-        cameraNodes.emplace_back(*rootNodeDataResult.Value(), ProjectionSettings{});
+        cameraNodes.emplace_back(sceneNode, ProjectionSettings{});
     }
 
     return cameraNodes;
@@ -394,8 +403,23 @@ Scene::Create(const ResourceBundle& resourceBundle)
     auto physicsNodes = CollectPhysicsNodes(*worldIdentifierResult, resourceBundle, *sceneNodes);
     MLG_CHECK(physicsNodes, "Failed to collect physics nodes");
 
-    auto cameraNodes = CollectCameraNodes(resourceBundle, *sceneNodes);
-    MLG_CHECK(cameraNodes, "Failed to collect camera nodes");
+    auto cameraNodesResult = CollectCameraNodes(resourceBundle, *sceneNodes);
+    MLG_CHECK(cameraNodesResult, "Failed to collect camera nodes");
+
+    BoundedVector<CameraNode> cameraNodes = std::move(*cameraNodesResult);
+
+    // If there are no camera nodes, add a default camera node.
+    if(cameraNodes.empty())
+    {
+        MLG_ASSERT(sceneNodes->capacity() > sceneNodes->size(),
+            "Insufficient capacity to add default camera node");
+
+        cameraNodes = BoundedVector<CameraNode>(1);
+
+        SceneNode& newNode =
+            sceneNodes->emplace_back(CameraNode::kDefaultCameraName, TrTransformf{});
+        cameraNodes.emplace_back(newNode, ProjectionSettings{});
+    }
 
     cleanup.release();
 
@@ -403,7 +427,7 @@ Scene::Create(const ResourceBundle& resourceBundle)
         std::move(stringStorage),
         std::move(*physicsNodes),
         std::move(*modelNodes),
-        std::move(*cameraNodes),
+        std::move(cameraNodes),
         std::move(*meshes),
         *worldIdentifierResult));
 }
@@ -487,18 +511,30 @@ Scene::Update(const float timeStep)
                 .T = Vec3f{ pos.x, pos.y, pos.z },
             };
 
-        physicsNode.m_RootNodeData->m_LocalTransform = localTransform;
-    }
-
-    for(const CameraNode& cameraNode : m_CameraNodes)
-    {
-        cameraNode.m_RootNodeData->m_LocalTransform = cameraNode.GetTargetLocalTransform();
+        SceneNode* sceneNode = GetMutableNode(*physicsNode.m_SceneNode);
+        if(MLG_VERIFY(sceneNode, "Failed to get mutable scene node for physics node"))
+        {
+            sceneNode->m_LocalTransform = localTransform.ToTrsTransform();
+        }
     }
 
     UpdateWorldTransforms();
 }
 
 // private:
+
+SceneNode*
+Scene::GetMutableNode(const SceneNode& node)
+{
+    if(!MLG_VERIFY(!m_Nodes.empty() && &node >= m_Nodes.data() && &node <= &m_Nodes.back(),
+           "Node is not in scene"))
+    {
+        return nullptr;
+    }
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
+    return const_cast<SceneNode*>(&node);
+}
 
 PhysicsNode*
 Scene::GetMutableNode(const PhysicsNode& node)

@@ -166,6 +166,7 @@ struct ChildNodeDef final
     TrsTransformf Transform;
     std::vector<ChildNodeDef> Children;
     std::optional<ModelRef> Model;
+    std::optional<CameraDef> Camera;
 };
 
 struct RootNodeDef final
@@ -293,21 +294,6 @@ private:
     uint64_t m_SortKey{ 0 };
 };
 
-class SceneNode;
-
-struct RootNodeData
-{
-    SceneNode* m_SceneNode{ nullptr };
-    TrTransformf m_LocalTransform;
-};
-
-struct ChildNodeData
-{
-    SceneNode* m_SceneNode{ nullptr };
-    TrsTransformf m_LocalTransform;
-    const SceneNode* m_Parent{ nullptr };
-};
-
 /// Represents a node within the scene graph, including its local and world transforms,
 /// and hierarchical relationships.
 /// Note that the name of the node is stored as a string view and must remain valid for the lifetime
@@ -318,34 +304,14 @@ public:
     SceneNode(
         const std::string_view name, const TrsTransformf& localTransform, const SceneNode& parent)
         : m_Name(name),
-          m_NodeData(ChildNodeData //
-              {
-                  .m_SceneNode = this,
-                  .m_LocalTransform = localTransform,
-                  .m_Parent = &parent,
-              })
-    {
-    }
-
-    SceneNode(
-        const std::string_view name, const TrTransformf& localTransform, const SceneNode& parent)
-        : m_Name(name),
-          m_NodeData(ChildNodeData //
-              {
-                  .m_SceneNode = this,
-                  .m_LocalTransform = localTransform.ToTrsTransform(),
-                  .m_Parent = &parent,
-              })
+          m_LocalTransform(localTransform),
+          m_Parent(&parent)
     {
     }
 
     SceneNode(const std::string_view name, const TrTransformf& localTransform)
         : m_Name(name),
-          m_NodeData(RootNodeData //
-              {
-                  .m_SceneNode = this,
-                  .m_LocalTransform = localTransform,
-              })
+          m_LocalTransform(localTransform.ToTrsTransform())
     {
     }
 
@@ -358,49 +324,52 @@ public:
 
     std::string_view GetName() const { return m_Name; }
 
-    Mat44f GetLsMatrix() const
-    {
-        if(std::holds_alternative<RootNodeData>(m_NodeData))
-        {
-            return std::get<RootNodeData>(m_NodeData).m_LocalTransform.ToMatrix();
-        }
-        return std::get<ChildNodeData>(m_NodeData).m_LocalTransform.ToMatrix();
-    }
+    /// Sets the local transform of the node.
+    void SetTransform(const TrsTransformf& localTransform) { m_LocalTransform = localTransform; }
 
+    /// Returns the local transform of the node.
+    /// This does not include any parent transforms.
+    const TrsTransformf& GetTransform() const { return m_LocalTransform; }
+
+    /// Sets the location of the node within its local transform.
+    void SetLocation(const Vec3f& location) { m_LocalTransform.T = location; }
+
+    /// Returns the location of the node within its local transform.
+    const Vec3f& GetLocation() const { return m_LocalTransform.T; }
+
+    /// Sets the rotation of the node within its local transform.
+    void SetRotation(const UnitQuatf& rotation) { m_LocalTransform.R = rotation; }
+
+    /// Returns the rotation of the node within its local transform.
+    const UnitQuatf& GetRotation() const { return m_LocalTransform.R; }
+
+    /// Returns the local space transformation matrix of the node.
+    /// This does not include any parent transforms.
+    Mat44f GetLsMatrix() const { return m_LocalTransform.ToMatrix(); }
+
+    /// Returns the world space transformation matrix of the node.
+    /// This includes all parent transforms.
     const Mat44f& GetWsMatrix() const { return m_WsMatrix; }
 
-    const SceneNode* GetParent() const
-    {
-        if(std::holds_alternative<ChildNodeData>(m_NodeData))
-        {
-            return std::get<ChildNodeData>(m_NodeData).m_Parent;
-        }
-        return nullptr;
-    }
-
-    Result<RootNodeData*> GetRootNodeData()
-    {
-        MLG_CHECKV(std::holds_alternative<RootNodeData>(m_NodeData),
-            "Node does not contain root node data");
-        return &std::get<RootNodeData>(m_NodeData);
-    }
+    /// Returns the parent of the node, or nullptr if it has no parent.
+    const SceneNode* GetParent() const { return m_Parent; }
 
 private:
     friend class Scene;
 
     std::string_view m_Name;
-    std::variant<RootNodeData, ChildNodeData> m_NodeData;
+    TrsTransformf m_LocalTransform;
     Mat44f m_WsMatrix{ 1 };
+    const SceneNode* m_Parent{ nullptr };
     std::span<SceneNode> m_Children;
 };
 
 /// Represents a node in the scene to which physics can be applied.
-/// All PhysicsNodes are associated with a RootNode.
 /// PhysicsNodes can only appear at the root of the scene graph.
 class PhysicsNode
 {
 public:
-    PhysicsNode(RootNodeData& rootNodeData, const RigidBodyIdentifier rigidBodyId);
+    PhysicsNode(const SceneNode& sceneNode, const RigidBodyIdentifier rigidBodyId);
 
     PhysicsNode() = delete;
     ~PhysicsNode() = default;
@@ -409,7 +378,7 @@ public:
     PhysicsNode(PhysicsNode&&) = delete;
     PhysicsNode& operator=(PhysicsNode&&) = delete;
 
-    std::string_view GetName() const { return m_RootNodeData->m_SceneNode->GetName(); }
+    std::string_view GetName() const { return m_SceneNode->GetName(); }
 
     void ApplyImpulse(const Vec3f& impulse);
 
@@ -434,7 +403,7 @@ public:
 private:
     friend class Scene;
 
-    RootNodeData* m_RootNodeData{ nullptr };
+    const SceneNode* m_SceneNode{ nullptr };
     RigidBodyIdentifier m_RigidBodyId;
 };
 
@@ -488,14 +457,12 @@ private:
 };
 
 /// Represents a camera node within the scene graph.
-/// All CameraNodes are associated with a RootNode.
-/// CameraNodes can only appear at the root of the scene graph.
 class CameraNode
 {
 public:
-    static constexpr std::string_view kDefaultCameraName{ "DefaultCamera" };
+    static constexpr std::string_view kDefaultCameraName{ "!!!!DefaultCamera****" };
 
-    CameraNode(RootNodeData& rootNodeData, const ProjectionSettings& projectionSettings);
+    CameraNode(SceneNode& sceneNode, const ProjectionSettings& projectionSettings);
 
     CameraNode() = delete;
     ~CameraNode() = default;
@@ -504,23 +471,36 @@ public:
     CameraNode(CameraNode&&) = delete;
     CameraNode& operator=(CameraNode&&) = delete;
 
-    std::string_view GetName() const { return m_RootNodeData->m_SceneNode->GetName(); }
+    std::string_view GetName() const { return m_SceneNode->GetName(); }
 
-    const TrTransformf& GetLocalTransform() const { return m_RootNodeData->m_LocalTransform; }
+    /// Returns the scene node associated with this camera.
+    const SceneNode& GetSceneNode() const { return *m_SceneNode; }
 
-    const TrTransformf& GetTargetLocalTransform() const { return m_TargetLocalTransform; }
+    /// Returns the world space transformation matrix of the camera.
+    /// This includes all parent transforms.
+    const Mat44f& GetWsMatrix() const { return m_SceneNode->GetWsMatrix(); }
 
-    void SetTargetLocalTransform(const TrTransformf& transform)
-    {
-        m_TargetLocalTransform = transform;
-    }
+    /// Returns the local space transformation of the camera.
+    /// This does not include any parent transforms.
+    TrsTransformf GetTransform() const { return m_SceneNode->GetTransform(); }
+
+    /// Sets the location of the camera within its local transform.
+    void SetLocation(const Vec3f& location) { m_SceneNode->SetLocation(location); }
+
+    /// Returns the location of the camera within its local transform.
+    const Vec3f& GetLocation() const { return m_SceneNode->GetLocation(); }
+
+    /// Sets the rotation of the camera within its local transform.
+    void SetRotation(const UnitQuatf& rotation) { m_SceneNode->SetRotation(rotation); }
+
+    /// Returns the rotation of the camera within its local transform.
+    const UnitQuatf& GetRotation() const { return m_SceneNode->GetRotation(); }
 
     const ProjectionSettings& GetProjectionSettings() const { return m_ProjectionSettings; }
 
 private:
     friend class Scene;
 
-    RootNodeData* m_RootNodeData{ nullptr };
-    TrTransformf m_TargetLocalTransform;
+    SceneNode* m_SceneNode{ nullptr };
     ProjectionSettings m_ProjectionSettings;
 };

@@ -146,7 +146,7 @@ Frustum::Transform(const TrTransformf& transform) const
 Frustum
 Frustum::Transform(const Mat44f& transform) const
 {
-    const Mat44f invTranspose = transform.Inverse().Transpose();
+    const Mat44f invTranspose = transform.InverseAffine().Transpose();
 
     return Frustum(NormalizePlane(invTranspose * m_Planes[kLeft]),
         NormalizePlane(invTranspose * m_Planes[kRight]),

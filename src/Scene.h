@@ -33,19 +33,13 @@ public:
     std::span<const ModelNode> GetAllModelNodes() const { return m_ModelNodes; }
     std::span<ModelNode> GetAllModelNodes() { return m_ModelNodes; }
 
+    /// Returns all camera nodes in the scene, in breadth-first order.
+    std::span<const CameraNode> GetAllCameraNodes() const { return m_CameraNodes; }
+    std::span<CameraNode> GetAllCameraNodes() { return m_CameraNodes; }
+
     Result<CameraNode*> GetCameraNode(const std::string_view name);
 
     Result<const CameraNode*> GetCameraNode(const std::string_view name) const;
-
-    Result<CameraNode*> GetDefaultCameraNode()
-    {
-        return GetCameraNode(CameraNode::kDefaultCameraName);
-    }
-
-    Result<const CameraNode*> GetDefaultCameraNode() const
-    {
-        return GetCameraNode(CameraNode::kDefaultCameraName);
-    }
 
     Result<> SetActive(const PhysicsNode& physicsNode, bool active);
 
@@ -62,6 +56,7 @@ private:
 
     /// Returns a mutable pointer to the scene node corresponding to the node reference, or
     /// nullptr if the node is not part of the scene.
+    SceneNode* GetMutableNode(const SceneNode& node);
     PhysicsNode* GetMutableNode(const PhysicsNode& node);
 
     void UpdateWorldTransforms();

@@ -21,9 +21,9 @@ public:
 
     void Update(const InputMapper& inputMapper, const float deltaSeconds);
 
-    void SetTransform(const TrTransformf& transform);
+    void SetLocation(const Vec3f& location);
 
-    TrTransformf GetTransform() const;
+    void SetRotation(const UnitQuatf& rotation);
 
     const ProjectionSettings& GetProjectionSettings() const { return m_ProjectionSettings; }
 
@@ -39,6 +39,7 @@ private:
 
     CameraNode* m_CameraNode{ nullptr };
 
-    TrTransformf m_TargetTransform = TrTransformf::Identity();
+    Vec3f m_TargetLocation{ 0, 0, 0 };
+    UnitQuatf m_TargetRotation = UnitQuatf::Identity();    
     ProjectionSettings m_ProjectionSettings;
 };

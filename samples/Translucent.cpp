@@ -188,22 +188,16 @@ TranslucentApp::OnUpdate()
                 {
                     m_Level = std::move(*levelResult);
 
-                    if(auto cameraNodeResult = m_Level->GetScene().GetDefaultCameraNode();
-                        !cameraNodeResult)
-                    {
-                        MLG_ERROR("Failed to get default camera node");
-                        m_Stage = Stage::Stopped;
-                    }
-                    else if(!AddActionMappings())
+                    if(!AddActionMappings())
                     {
                         MLG_ERROR("Failed to add action mappings");
                         m_Stage = Stage::Stopped;
                     }
                     else
                     {
-                        CameraNode* cameraNode = *cameraNodeResult;
-                        m_CameraActor.emplace(m_System->GetInputMapper(), *cameraNode);
-                        m_CameraActor->SetTransform(TrTransformf{ .T = { 0, 0, -4 } });
+                        CameraNode& cameraNode = m_Level->GetScene().GetAllCameraNodes().front();
+                        m_CameraActor.emplace(m_System->GetInputMapper(), cameraNode);
+                        m_CameraActor->SetLocation({ 0, 0, -4 });
                         m_Stage = Stage::Running;
                     }
 

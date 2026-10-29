@@ -126,8 +126,6 @@ private:
 
     std::unique_ptr<Level> m_Level;
 
-    TrTransformf m_CameraXForm{ .T{ 0, 0, -4 } };
-
     Timer m_FrameTimer;
 
     Stage m_Stage{ Stage::None };
@@ -200,22 +198,14 @@ TriangleApp::OnUpdate()
             }
             else if(!m_System->IsMinimized())
             {
-                auto cameraResult = m_Level->GetScene().GetDefaultCameraNode();
-                if(!cameraResult)
+                CameraNode& cameraNode = m_Level->GetScene().GetAllCameraNodes().front();
+                cameraNode.SetLocation({ 0, 0, -4 });
+
+                m_Level->GetScene().Update(elapsedSeconds);
+
+                if(!MLG_VERIFY(Render(), "Failed to render view"))
                 {
-                    MLG_ERROR("Failed to get default camera node");
                     m_Stage = Stage::Stopped;
-                }
-                else
-                {
-                    cameraResult->SetTargetLocalTransform(m_CameraXForm);
-
-                    m_Level->GetScene().Update(elapsedSeconds);
-
-                    if(!MLG_VERIFY(Render(), "Failed to render view"))
-                    {
-                        m_Stage = Stage::Stopped;
-                    }
                 }
             }
             break;

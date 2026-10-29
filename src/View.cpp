@@ -139,6 +139,29 @@ CreateMaterialProperties(const GpuHelper& gpuHelper,
 
     return materialProperties;
 }
+
+/// Returns the world-space transform of the given camera node.
+TrTransformf
+GetCameraWsTransform(const CameraNode& camera)
+{
+    UnitQuatf rotation = UnitQuatf::Identity();
+
+    // Accumulate rotation from the camera node and its ancestors.
+    // Exclude scaling that might be present in the local transforms.
+    for(const SceneNode* node = &camera.GetSceneNode(); node; node = node->GetParent())
+    {
+        rotation = node->GetTransform().R * rotation;
+    }
+
+    // Extract the translation component (possibly scaled) from the world-space matrix.
+    const Mat44f& world = camera.GetWsMatrix();
+
+    return TrTransformf//
+    {
+        .R = rotation,
+        .T = Vec3f{ world[3].x, world[3].y, world[3].z },
+    };
+}
 } // namespace
 
 View::View(const GpuHelper& gpuHelper,
@@ -201,19 +224,17 @@ View::Render(const Dimension2d& dstExtents)
     const wgpu::CommandEncoder cmdEncoder = gpuDevice.CreateCommandEncoder(&encoderDesc);
     MLG_CHECK(cmdEncoder, "Failed to create command encoder");
 
-    const auto cameraResult = m_Scene->GetDefaultCameraNode();
-    MLG_CHECK(cameraResult, "Failed to get default camera node");
-
-    ProjectionSettings updatedSettings = cameraResult->GetProjectionSettings();
+    const CameraNode& cameraNode = m_Scene->GetAllCameraNodes().front();
+    ProjectionSettings updatedSettings = cameraNode.GetProjectionSettings();
     updatedSettings.AspectRatio =
         static_cast<float>(dstExtents.GetWidth()) / static_cast<float>(dstExtents.GetHeight());
     auto frustumResult = Frustum::Create(updatedSettings);
     MLG_CHECK(frustumResult);
     const Frustum frustum = *frustumResult;
 
-    const TrTransformf& cameraXForm = cameraResult->GetLocalTransform();
+    const TrTransformf cameraWsXForm = GetCameraWsTransform(cameraNode);
 
-    MLG_CHECK(TransformNodes(gpuDevice, cmdEncoder, cameraXForm, frustum));
+    MLG_CHECK(TransformNodes(gpuDevice, cmdEncoder, cameraWsXForm, frustum));
 
     if(!m_ColorPassOutputs
         || m_ColorPassOutputs->RenderTarget->GetWidth() != dstExtents.GetWidth()
@@ -239,7 +260,7 @@ View::Render(const Dimension2d& dstExtents)
     MLG_CHECK(m_ColorPass->SetInputs(colorPassInputs));
     MLG_CHECK(m_ColorPass->SetOutputs(*m_ColorPassOutputs));
 
-    CullMeshes(cameraXForm, frustum);
+    CullMeshes(cameraWsXForm, frustum);
 
     MLG_CHECK(m_ColorPass->Execute(cmdEncoder, m_CulledMeshes, m_MaterialProperties));
 

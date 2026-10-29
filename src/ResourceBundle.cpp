@@ -861,7 +861,7 @@ CollectRigidBodies(const std::span<const RootNodeDef> nodeDefs)
 }
 
 Result<std::vector<CameraResource>>
-CollectCameras(const std::span<const RootNodeDef> nodeDefs)
+CollectCameras(const std::span<const FlatNodeDef> flatNodeDefs)
 {
     std::vector<CameraResource> cameras;
 
@@ -872,9 +872,13 @@ CollectCameras(const std::span<const RootNodeDef> nodeDefs)
         });
 
     size_t count = 0;
-    for(const RootNodeDef& nodeDef : nodeDefs)
+    for(const FlatNodeDef& flatNodeDef : flatNodeDefs)
     {
-        if(nodeDef.Camera)
+        const bool hasCamera =
+            std::visit([&](const auto* nodeDef) { return static_cast<bool>(nodeDef->Camera); },
+                flatNodeDef.NodeDefPtr);
+
+        if(hasCamera)
         {
             MLG_CHECKV(!safeint::AddWillOverflow(count, 1uz, kMaxCameraCount),
                 "Camera count overflow");
@@ -884,25 +888,31 @@ CollectCameras(const std::span<const RootNodeDef> nodeDefs)
 
     cameras.reserve(count);
 
-    for(size_t nodeIndex = 0; nodeIndex < nodeDefs.size(); ++nodeIndex)
+    for(size_t nodeIndex = 0; nodeIndex < flatNodeDefs.size(); ++nodeIndex)
     {
-        const RootNodeDef& nodeDef = nodeDefs[nodeIndex];
+        const FlatNodeDef& flatNodeDef = flatNodeDefs[nodeIndex];
 
-        const std::optional<CameraDef> camera = nodeDef.Camera;
-        if(!camera)
-        {
-            continue;
-        }
-
-        const CameraResource cameraRsrc //
+        const auto result = std::visit(
+            [&](const auto* nodeDef) -> Result<>
             {
-                .NodeIndex = static_cast<IndexType>(nodeIndex),
-            };
+                const std::optional<CameraDef>& optCamera = nodeDef->Camera;
 
-        cameras.push_back(cameraRsrc);
+                if(optCamera)
+                {
+                    const CameraResource cameraRsrc //
+                        {
+                            .NodeIndex = static_cast<IndexType>(nodeIndex),
+                        };
+
+                    cameras.push_back(cameraRsrc);
+                }
+
+                return Result<>::Ok;
+            },
+            flatNodeDef.NodeDefPtr);
+
+        MLG_CHECK(result);
     }
-
-    MLG_CHECKV(!cameras.empty(), "No cameras found");
 
     return cameras;
 }
@@ -1289,37 +1299,7 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
     // Free old buffer mem
     std::vector<std::byte>().swap(m_Buffer);
 
-    std::span rootNodeDefs(sceneDef.NodeDefs);
-
-    // Make sure there's a default camera node if none exist.
-
-    bool hasDefaultCamera = false;
-    for(const RootNodeDef& rootNodeDef : rootNodeDefs)
-    {
-        if(rootNodeDef.Camera && rootNodeDef.Name == CameraNode::kDefaultCameraName)
-        {
-            hasDefaultCamera = true;
-        }
-    }
-
-    std::vector<RootNodeDef> newRootNodeDefs;
-
-    if(!hasDefaultCamera)
-    {
-        newRootNodeDefs = std::vector<RootNodeDef>(rootNodeDefs.begin(), rootNodeDefs.end());
-
-        // Add a default camera node
-        const RootNodeDef defaultCameraNodeDef
-        {
-            .Name{CameraNode::kDefaultCameraName},
-            .Camera{CameraDef{}}
-        };
-
-        newRootNodeDefs.emplace_back(defaultCameraNodeDef);
-        rootNodeDefs = std::span(newRootNodeDefs);
-    }
-
-    const auto flatNodeDefs = FlattenNodesBreadthFirst(rootNodeDefs);
+    const auto flatNodeDefs = FlattenNodesBreadthFirst(sceneDef.NodeDefs);
     MLG_CHECK(flatNodeDefs);
 
     const auto meshDefs = CollectMeshDefs(sceneDef.ModelDefs);
@@ -1343,11 +1323,11 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
     MLG_CHECK(modelIndexMap);
     const auto modelInstances = CollectModelInstances(*flatNodeDefs, *modelIndexMap);
     MLG_CHECK(modelInstances);
-    const auto colliders = CollectColliders(rootNodeDefs);
+    const auto colliders = CollectColliders(sceneDef.NodeDefs);
     MLG_CHECK(colliders);
-    const auto rigidBodies = CollectRigidBodies(rootNodeDefs);
+    const auto rigidBodies = CollectRigidBodies(sceneDef.NodeDefs);
     MLG_CHECK(rigidBodies);
-    const auto cameras = CollectCameras(rootNodeDefs);
+    const auto cameras = CollectCameras(*flatNodeDefs);
     MLG_CHECK(cameras);
     const auto nodes = CollectSceneNodes(*flatNodeDefs, *stringIndexMap);
     MLG_CHECK(nodes);
