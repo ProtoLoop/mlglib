@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ProjectionSettings.h"
+#include "Projection.h"
 #include "Result.h"
 #include "VecMath.h"
 
@@ -12,14 +12,16 @@ class BoundingSphere;
 class Frustum
 {
 public:
-    Frustum()
-        : Frustum(ProjectionSettings{})
-    {
-    }
+    Frustum() : Frustum(Projection::Perspective{}) {}
 
-    static Result<Frustum> Create(const ProjectionSettings& settings);
+    /// Create a frustum from a perspective projection.
+    static Result<Frustum> Create(const Projection::Perspective& settings);
 
-    static Result<Frustum> Create(const ProjectionSettings& settings,
+    /// Create a frustum from an orthographic projection.
+    static Result<Frustum> Create(const Projection::Orthographic& settings);
+
+    /// Create a frustum from a perspective projection and a selection rectangle in screen space.
+    static Result<Frustum> Create(const Projection::Perspective& settings,
         const Rect& selectRect,
         const uint32_t screenWidth,
         const uint32_t screenHeight);
@@ -36,8 +38,6 @@ public:
 
     /// Transform the frustum into the space defined by the transform matrix.
     Frustum Transform(const Mat44f& transform) const;
-
-    const ProjectionSettings& GetSettings() const { return m_Settings; }
 
     Mat44f GetMatrix() const { return m_Matrix; }
 
@@ -61,11 +61,14 @@ private:
     constexpr static size_t kFar = 5;
     constexpr static size_t kNumPlanes = 6;
 
-    /// Construct a frustum from a parameterized projection.
-    explicit Frustum(const ProjectionSettings& settings);
+    /// Construct a frustum from a perspective projection.
+    explicit Frustum(const Projection::Perspective& settings);
+
+    /// Construct a frustum from an orthographic projection.
+    explicit Frustum(const Projection::Orthographic& settings);
 
     /// Construct a frustum from a projection and a selection rectangle in screen space.
-    Frustum(const ProjectionSettings& settings,
+    Frustum(const Projection::Perspective& settings,
         const Rect& selectRect,
         const uint32_t screenWidth,
         const uint32_t screenHeight);
@@ -76,17 +79,13 @@ private:
         const Vec4f& bottom,
         const Vec4f& near,
         const Vec4f& far,
-        const Mat44f& matrix,
-        const ProjectionSettings& settings)
+        const Mat44f& matrix)
         : m_Planes{ left, right, top, bottom, near, far },
-          m_Matrix(matrix),
-          m_Settings(settings)
+          m_Matrix(matrix)
     {
     }
 
     Vec4f m_Planes[kNumPlanes]{};
 
-    Mat44f m_Matrix;
-
-    ProjectionSettings m_Settings;
+    Mat44f m_Matrix{ 1 };
 };

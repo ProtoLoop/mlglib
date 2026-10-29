@@ -903,8 +903,13 @@ public:
         return (mat.m[0] * vector.x) + (mat.m[1] * vector.y) + (mat.m[2] * vector.z) + mat.m[3];
     }
 
+    /// Perspective projection matrix for a left-handed coordinate system.
     static Mat44 PerspectiveLH(
         const Radians<T> fov, const T aspectRatio, const T nearClip, const T farClip) noexcept;
+
+    /// Orthographic projection matrix for a left-handed coordinate system.
+    static Mat44 OrthographicLH(
+        const T height, const T aspectRatio, const T nearClip, const T farClip) noexcept;
 };
 
 template<typename NumType>

@@ -278,6 +278,11 @@ Mat44<T>
 Mat44<T>::PerspectiveLH(
     const Radians<T> fov, const T aspectRatio, const T nearClip, const T farClip) noexcept
 {
+    MLG_ASSERT(nearClip > 0, "Near clip must be positive");
+    MLG_ASSERT(farClip > nearClip, "Far clip must be greater than near clip");
+    MLG_ASSERT(aspectRatio > 0, "Aspect ratio must be positive");
+    MLG_ASSERT(fov.GetValue() > 0, "Field of view must be positive");
+
     const T t = (fov * T{ 0.5 }).Tan();
 
     Mat44 result(0);
@@ -286,6 +291,33 @@ Mat44<T>::PerspectiveLH(
     result[2][2] = farClip / (farClip - nearClip);
     result[2][3] = 1;
     result[3][2] = -(farClip * nearClip) / (farClip - nearClip);
+    return result;
+}
+
+template<typename T>
+Mat44<T>
+Mat44<T>::OrthographicLH(
+    const T height, const T aspectRatio, const T nearClip, const T farClip) noexcept
+{
+    MLG_ASSERT(height > 0, "Height must be positive");
+    MLG_ASSERT(aspectRatio > 0, "Aspect ratio must be positive");
+    MLG_ASSERT(nearClip > 0, "Near clip must be positive");
+    MLG_ASSERT(farClip > nearClip, "Far clip must be greater than near clip");
+
+    const T width = height * aspectRatio;
+    const T left = -width * T{ 0.5 };
+    const T right = width * T{ 0.5 };
+    const T bottom = -height * T{ 0.5 };
+    const T top = height * T{ 0.5 };
+
+    Mat44 result(0);
+    result[0][0] = static_cast<T>(2) / (right - left);
+    result[1][1] = static_cast<T>(2) / (top - bottom);
+    result[2][2] = static_cast<T>(1) / (farClip - nearClip);
+    result[3][0] = -(right + left) / (right - left);
+    result[3][1] = -(top + bottom) / (top - bottom);
+    result[3][2] = -nearClip / (farClip - nearClip);
+    result[3][3] = 1;
     return result;
 }
 
@@ -413,6 +445,10 @@ template Mat44<float> Mat44<float>::Transpose() const noexcept;
 template void Mat44<float>::Decompose(
     Vec3<float>& translation, UnitQuat<float>& rotation, Vec3<float>& scale) const noexcept;
 template Mat44<float> Mat44<float>::PerspectiveLH(const Radians<float> fov,
+    const float aspectRatio,
+    const float nearClip,
+    const float farClip) noexcept;
+template Mat44<float> Mat44<float>::OrthographicLH(const float height,
     const float aspectRatio,
     const float nearClip,
     const float farClip) noexcept;

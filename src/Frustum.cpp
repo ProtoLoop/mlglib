@@ -21,7 +21,7 @@ NormalizePlane(const Vec4f& plane)
 } // namespace
 
 Result<Frustum>
-Frustum::Create(const ProjectionSettings& settings)
+Frustum::Create(const Projection::Perspective& settings)
 {
     MLG_CHECKV(settings.Fov.GetValue() > 0 && settings.Fov.GetValue() < std::numbers::pi_v<float>,
         "FOV must be between 0 and 180 degrees");
@@ -34,7 +34,18 @@ Frustum::Create(const ProjectionSettings& settings)
 }
 
 Result<Frustum>
-Frustum::Create(const ProjectionSettings& settings,
+Frustum::Create(const Projection::Orthographic& settings)
+{
+    MLG_CHECKV(settings.Height > 0, "Height must be greater than 0");
+    MLG_CHECKV(settings.AspectRatio > 0, "Aspect ratio must be greater than 0");
+    MLG_CHECKV(settings.NearClip > 0, "Near clip must be greater than 0");
+    MLG_CHECKV(settings.NearClip < settings.FarClip, "Near clip must be less than far clip");
+
+    return Frustum(settings);
+}
+
+Result<Frustum>
+Frustum::Create(const Projection::Perspective& settings,
     const Rect& selectRect,
     const uint32_t screenWidth,
     const uint32_t screenHeight)
@@ -51,44 +62,44 @@ Frustum::Create(const ProjectionSettings& settings,
     return Frustum(settings, selectRect, screenWidth, screenHeight);
 }
 
-Frustum::Frustum(const ProjectionSettings& settings)
+Frustum::Frustum(const Projection::Perspective& settings)
     : m_Matrix(Mat44f::PerspectiveLH(
-          settings.Fov, settings.AspectRatio, settings.NearClip, settings.FarClip)),
-      m_Settings(settings)
+          settings.Fov, settings.AspectRatio, settings.NearClip, settings.FarClip))
 {
     const Vec4f r0(m_Matrix[0][0], m_Matrix[1][0], m_Matrix[2][0], m_Matrix[3][0]);
     const Vec4f r1(m_Matrix[0][1], m_Matrix[1][1], m_Matrix[2][1], m_Matrix[3][1]);
     const Vec4f r2(m_Matrix[0][2], m_Matrix[1][2], m_Matrix[2][2], m_Matrix[3][2]);
     const Vec4f r3(m_Matrix[0][3], m_Matrix[1][3], m_Matrix[2][3], m_Matrix[3][3]);
 
-    m_Planes[kLeft] = Vec4f(r3 + r0);
-    m_Planes[kRight] = Vec4f(r3 - r0);
-    m_Planes[kTop] = Vec4f(r3 - r1);
-    m_Planes[kBottom] = Vec4f(r3 + r1);
-    m_Planes[kNear] = Vec4f(r2);
-    m_Planes[kFar] = Vec4f(r3 - r2);
-
-    const float ll = Vec3f(m_Planes[kLeft].x, m_Planes[kLeft].y, m_Planes[kLeft].z).Length();
-    const float lr = Vec3f(m_Planes[kRight].x, m_Planes[kRight].y, m_Planes[kRight].z).Length();
-    const float lt = Vec3f(m_Planes[kTop].x, m_Planes[kTop].y, m_Planes[kTop].z).Length();
-    const float lb = Vec3f(m_Planes[kBottom].x, m_Planes[kBottom].y, m_Planes[kBottom].z).Length();
-    const float ln = Vec3f(m_Planes[kNear].x, m_Planes[kNear].y, m_Planes[kNear].z).Length();
-    const float lf = Vec3f(m_Planes[kFar].x, m_Planes[kFar].y, m_Planes[kFar].z).Length();
-    m_Planes[kLeft] /= ll;
-    m_Planes[kRight] /= lr;
-    m_Planes[kTop] /= lt;
-    m_Planes[kBottom] /= lb;
-    m_Planes[kNear] /= ln;
-    m_Planes[kFar] /= lf;
+    m_Planes[kLeft] = NormalizePlane(Vec4f(r3 + r0));
+    m_Planes[kRight] = NormalizePlane(Vec4f(r3 - r0));
+    m_Planes[kTop] = NormalizePlane(Vec4f(r3 - r1));
+    m_Planes[kBottom] = NormalizePlane(Vec4f(r3 + r1));
+    m_Planes[kNear] = NormalizePlane(Vec4f(r2));
+    m_Planes[kFar] = NormalizePlane(Vec4f(r3 - r2));
 }
 
-Frustum::Frustum(const ProjectionSettings& settings,
+Frustum::Frustum(const Projection::Orthographic& settings)
+    : m_Matrix(Mat44f::OrthographicLH(
+          settings.Height, settings.AspectRatio, settings.NearClip, settings.FarClip))
+{
+    const float halfHeight = settings.Height * 0.5f;
+    const float halfWidth = halfHeight * settings.AspectRatio;
+
+    m_Planes[kLeft] = Vec4f(1, 0, 0, halfWidth);
+    m_Planes[kRight] = Vec4f(-1, 0, 0, halfWidth);
+    m_Planes[kTop] = Vec4f(0, -1, 0, halfHeight);
+    m_Planes[kBottom] = Vec4f(0, 1, 0, halfHeight);
+    m_Planes[kNear] = Vec4f(0, 0, 1, -settings.NearClip);
+    m_Planes[kFar] = Vec4f(0, 0, -1, settings.FarClip);
+}
+
+Frustum::Frustum(const Projection::Perspective& settings,
     const Rect& selectRect,
     const uint32_t screenWidth,
     const uint32_t screenHeight)
     : m_Matrix(Mat44f::PerspectiveLH(
-          settings.Fov, settings.AspectRatio, settings.NearClip, settings.FarClip)),
-      m_Settings(settings)
+          settings.Fov, settings.AspectRatio, settings.NearClip, settings.FarClip))
 {
     uint32_t srcW = screenWidth, scrH = screenHeight;
     if(!MLG_VERIFY(screenWidth > 0, "Screen width must be non-zero"))
@@ -154,8 +165,7 @@ Frustum::Transform(const Mat44f& transform) const
         NormalizePlane(invTranspose * m_Planes[kBottom]),
         NormalizePlane(invTranspose * m_Planes[kNear]),
         NormalizePlane(invTranspose * m_Planes[kFar]),
-        m_Matrix,
-        m_Settings);
+        m_Matrix);
 }
 
 Frustum::ContainsResult

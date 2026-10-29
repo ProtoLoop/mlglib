@@ -5,12 +5,15 @@
 #include "FilePath.h"
 #include "InplaceString.h"
 #include "PhysicsTypes.h"
-#include "ProjectionSettings.h"
+#include "Projection.h"
 #include "VecMath.h"
 
 #include <optional>
 #include <span>
+#include <variant>
 #include <vector>
+
+class Frustum;
 
 /// Definitions for scene structure, including materials, meshes, models, and nodes.
 /// Used to declaratively define the structure and properties of a scene.
@@ -462,7 +465,7 @@ class CameraNode
 public:
     static constexpr std::string_view kDefaultCameraName{ "!!!!DefaultCamera****" };
 
-    CameraNode(SceneNode& sceneNode, const ProjectionSettings& projectionSettings);
+    explicit CameraNode(SceneNode& sceneNode);
 
     CameraNode() = delete;
     ~CameraNode() = default;
@@ -496,11 +499,14 @@ public:
     /// Returns the rotation of the camera within its local transform.
     const UnitQuatf& GetRotation() const { return m_SceneNode->GetRotation(); }
 
-    const ProjectionSettings& GetProjectionSettings() const { return m_ProjectionSettings; }
+    /// Creates a view frustum for the camera using the specified aspect ratio.
+    /// The frustum will be based on the camera's current projection settings.
+    Result<Frustum> CreateFrustum(const float aspectRatio) const;
 
 private:
     friend class Scene;
 
     SceneNode* m_SceneNode{ nullptr };
-    ProjectionSettings m_ProjectionSettings;
+    std::variant<std::monostate, Projection::Perspective, Projection::Orthographic>
+        m_ProjectionSettings;
 };

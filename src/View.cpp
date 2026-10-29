@@ -225,10 +225,8 @@ View::Render(const Dimension2d& dstExtents)
     MLG_CHECK(cmdEncoder, "Failed to create command encoder");
 
     const CameraNode& cameraNode = m_Scene->GetAllCameraNodes().front();
-    ProjectionSettings updatedSettings = cameraNode.GetProjectionSettings();
-    updatedSettings.AspectRatio =
-        static_cast<float>(dstExtents.GetWidth()) / static_cast<float>(dstExtents.GetHeight());
-    auto frustumResult = Frustum::Create(updatedSettings);
+    const float aspectRatio = static_cast<float>(dstExtents.GetWidth()) / static_cast<float>(dstExtents.GetHeight());
+    auto frustumResult = cameraNode.CreateFrustum(aspectRatio);
     MLG_CHECK(frustumResult);
     const Frustum frustum = *frustumResult;
 

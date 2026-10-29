@@ -12,11 +12,9 @@
 #include <optional>
 #include <vector>
 
-struct ProjectionSettings;
 class Frustum;
 class ResourceBundle;
 class System;
-class ThreadPool;
 class Scene;
 
 /// A view of the scene.

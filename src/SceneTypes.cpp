@@ -1,6 +1,9 @@
 #include "SceneTypes.h"
 
+#include "Frustum.h"
+
 #include <box3d/Box3D.h>
+#include <variant>
 
 /// PhysicsNode
 
@@ -106,8 +109,29 @@ ModelNode::ModelNode(const SceneNode& node,
 
 /// CameraNode
 
-CameraNode::CameraNode(SceneNode& sceneNode, const ProjectionSettings& projectionSettings)
+CameraNode::CameraNode(SceneNode& sceneNode)
     : m_SceneNode(&sceneNode),
-      m_ProjectionSettings(projectionSettings)
+      m_ProjectionSettings(Projection::Perspective{})
 {
+}
+
+Result<Frustum>
+CameraNode::CreateFrustum(const float aspectRatio) const
+{
+    MLG_CHECKV(aspectRatio > 0.0f, "Aspect ratio must be positive");
+
+    return std::visit([aspectRatio](auto& settings) -> Result<Frustum>
+    {
+        if constexpr (std::is_same_v<std::decay_t<decltype(settings)>, std::monostate>)
+        {
+            MLG_ERROR("Projection settings not specified");
+            return Result<>::Fail;
+        }
+        else
+        {
+            auto updatedSettings = settings;
+            updatedSettings.AspectRatio = aspectRatio;
+            return Frustum::Create(updatedSettings);
+        }
+    }, m_ProjectionSettings);
 }

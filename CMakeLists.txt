@@ -443,7 +443,7 @@ set(SSG_HEADERS
   src/Log.h
   src/PhysicsTypes.h
   src/PerfMetrics.h
-  src/ProjectionSettings.h
+  src/Projection.h
   src/ResourceBundle.h
   src/Result.h
   src/SafeInteger.h

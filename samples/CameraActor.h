@@ -1,7 +1,6 @@
 #pragma once
 
 #include "VecMath.h"
-#include "ProjectionSettings.h"
 
 #include <numbers>
 
@@ -25,8 +24,6 @@ public:
 
     void SetRotation(const UnitQuatf& rotation);
 
-    const ProjectionSettings& GetProjectionSettings() const { return m_ProjectionSettings; }
-
 private:
     static constexpr float kHalfPi = std::numbers::pi_v<float> * 0.5f;
 
@@ -40,6 +37,5 @@ private:
     CameraNode* m_CameraNode{ nullptr };
 
     Vec3f m_TargetLocation{ 0, 0, 0 };
-    UnitQuatf m_TargetRotation = UnitQuatf::Identity();    
-    ProjectionSettings m_ProjectionSettings;
+    UnitQuatf m_TargetRotation = UnitQuatf::Identity();
 };

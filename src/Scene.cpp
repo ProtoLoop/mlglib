@@ -333,7 +333,7 @@ CollectCameraNodes(const ResourceBundle& resourceBundle, const std::span<SceneNo
     {
         SceneNode& sceneNode = nodes[camera.NodeIndex];
 
-        cameraNodes.emplace_back(sceneNode, ProjectionSettings{});
+        cameraNodes.emplace_back(sceneNode);
     }
 
     return cameraNodes;
@@ -418,7 +418,7 @@ Scene::Create(const ResourceBundle& resourceBundle)
 
         SceneNode& newNode =
             sceneNodes->emplace_back(CameraNode::kDefaultCameraName, TrTransformf{});
-        cameraNodes.emplace_back(newNode, ProjectionSettings{});
+        cameraNodes.emplace_back(newNode);
     }
 
     cleanup.release();
