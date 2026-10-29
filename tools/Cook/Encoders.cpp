@@ -1,4 +1,4 @@
-#include "Compressors.h"
+#include "Encoders.h"
 
 #include <astcenc.h>
 #include <bc7enc.h>

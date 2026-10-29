@@ -375,9 +375,9 @@ add_custom_target(copy_sponza
 )
 
 # ============================================================
-# Library: ssg
+# Library: mlglib
 # ============================================================
-set(SSG_SOURCES
+set(MLGLIB_SOURCES
   src/AssertHelper.cpp
   src/BoundingVolumes.cpp
   src/Cullers.cpp
@@ -417,7 +417,7 @@ set(SSG_SOURCES
   src/View.cpp
 )
 
-set(SSG_HEADERS
+set(MLGLIB_HEADERS
   src/AssertHelper.h
   src/BoundingVolumes.h
   src/Containers.h
@@ -464,11 +464,11 @@ set(SSG_HEADERS
   src/View.h
 )
 
-add_library(ssg)
-add_library(ssg::ssg ALIAS ssg)
-target_sources(ssg
-  PRIVATE ${SSG_SOURCES}
-  PUBLIC FILE_SET HEADERS BASE_DIRS src FILES ${SSG_HEADERS}
+add_library(mlglib)
+add_library(mlglib::mlglib ALIAS mlglib)
+target_sources(mlglib
+  PRIVATE ${MLGLIB_SOURCES}
+  PUBLIC FILE_SET HEADERS BASE_DIRS src FILES ${MLGLIB_HEADERS}
 )
 
 # Keep third-party implementations out of clang-tidy noise.
@@ -476,15 +476,15 @@ set_source_files_properties(src/cgltf.cpp PROPERTIES SKIP_LINTING ON)
 set_source_files_properties(src/stb_image.cpp PROPERTIES SKIP_LINTING ON)
 
 if(EMSCRIPTEN)
-  target_link_libraries(ssg PUBLIC emdawnwebgpu_cpp)
+  target_link_libraries(mlglib PUBLIC emdawnwebgpu_cpp)
 else()
-  target_link_libraries(ssg PUBLIC webgpu_dawn)
+  target_link_libraries(mlglib PUBLIC webgpu_dawn)
 endif()
-target_link_libraries(ssg PUBLIC spdlog::spdlog SDL3::SDL3 imgui lua box3d::box3d)
-target_include_directories(ssg PUBLIC src)
-target_include_directories(ssg SYSTEM PRIVATE thirdparty/cgltf thirdparty/stb)
+target_link_libraries(mlglib PUBLIC spdlog::spdlog SDL3::SDL3 imgui lua box3d::box3d)
+target_include_directories(mlglib PUBLIC src)
+target_include_directories(mlglib SYSTEM PRIVATE thirdparty/cgltf thirdparty/stb)
 
-compiler_flags(ssg)
+compiler_flags(mlglib)
 
 # ============================================================
 # Helper functions for executables
@@ -523,21 +523,21 @@ endfunction()
 function(add_sample_executable target_name source_file)
   add_project_executable(${target_name}
     SOURCES ${source_file} samples/CameraActor.cpp
-    LIBRARIES ssg::ssg
+    LIBRARIES mlglib::mlglib
     DEPENDENCIES shaders)
 endfunction()
 
 function(add_tool_executable target_name source_file)
   add_project_executable(${target_name}
     SOURCES ${source_file}
-    LIBRARIES ssg::ssg)
+    LIBRARIES mlglib::mlglib)
 endfunction()
 
 # ============================================================
 # Tool: Cook
 # ============================================================
 add_tool_executable(Cook tools/Cook/Cook.cpp)
-target_sources(Cook PRIVATE tools/Cook/Ktx2Writer.cpp tools/Cook/MipMapChain.cpp tools/Cook/Compressors.cpp)
+target_sources(Cook PRIVATE tools/Cook/Ktx2Writer.cpp tools/Cook/MipMapChain.cpp tools/Cook/Encoders.cpp)
 target_link_libraries(Cook PRIVATE bc7enc_rdo astcenc-native-static)
 target_include_directories(Cook SYSTEM PRIVATE thirdparty/stb)
 
@@ -553,7 +553,7 @@ if(EMSCRIPTEN)
   file(GLOB_RECURSE _image_sources CONFIGURE_DEPENDS LIST_DIRECTORIES false
        "${CMAKE_SOURCE_DIR}/images/*")
   set_property(TARGET Triangle APPEND PROPERTY LINK_DEPENDS
-               "${browser_shell}" ${SSG_WGSL_SOURCES} ${_image_sources})
+               "${browser_shell}" ${MLGLIB_WGSL_SOURCES} ${_image_sources})
 
   target_link_options(Triangle PRIVATE
     "--shell-file"
@@ -578,7 +578,7 @@ if(EMSCRIPTEN)
   file(GLOB_RECURSE _image_sources CONFIGURE_DEPENDS LIST_DIRECTORIES false
        "${CMAKE_SOURCE_DIR}/images/*")
   set_property(TARGET Translucent APPEND PROPERTY LINK_DEPENDS
-               "${browser_shell}" ${SSG_WGSL_SOURCES} ${_image_sources})
+               "${browser_shell}" ${MLGLIB_WGSL_SOURCES} ${_image_sources})
 
   target_link_options(Translucent PRIVATE
     "--shell-file"
@@ -612,7 +612,7 @@ add_executable(Tests
   "tests/Containers.unit.cpp"
   "tests/Defer.unit.cpp"
   "tests/FilePath.unit.cpp"
-  "tests/FixedString.unit.cpp"
+  "tests/InplaceString.unit.cpp"
   "tests/inlist.unit.cpp"
   "tests/Mat44.unit.cpp"
   "tests/Quat.unit.cpp"
@@ -623,7 +623,7 @@ add_executable(Tests
   "tests/Vec3.unit.cpp"
   "tests/Vec4.unit.cpp")
 
-target_link_libraries(Tests PRIVATE gtest_main ssg::ssg)
+target_link_libraries(Tests PRIVATE gtest_main mlglib::mlglib)
 #add_dependencies(RunAllTests shaders copy_images)
 
 compiler_flags(Tests)
