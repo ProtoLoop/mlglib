@@ -148,7 +148,7 @@ MainLoop()
 
     const GpuHelper& gpuHelper = system->GetGpuHelper();
 
-    auto cameraNodeResult = scene.GetCameraNode("DefaultCamera");
+    auto cameraNodeResult = scene.GetDefaultCameraNode();
     MLG_CHECK(cameraNodeResult, "Failed to get default camera node");
     CameraActor cameraActor(system->GetInputMapper(), *cameraNodeResult.Value());
 
@@ -231,9 +231,7 @@ MainLoop()
         auto target = gpuHelper.GetSwapChainTexture();
         MLG_CHECKV(target, "Failed to get swap chain texture");
 
-        MLG_CHECK(view.Render(cameraActor.GetTransform(),
-            cameraActor.GetProjectionSettings(),
-            gpuHelper.GetScreenDimensions()));
+        MLG_CHECK(view.Render(gpuHelper.GetScreenDimensions()));
         MLG_CHECK(view.Composite(*target));
 
         const ImGuiRenderer& imGuiRenderer = system->GetImGuiRenderer();

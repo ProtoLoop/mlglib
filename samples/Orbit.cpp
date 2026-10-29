@@ -608,7 +608,7 @@ MainLoop()
 
     ApplyRandomVelocities(scene);
 
-    auto cameraNodeResult = scene.GetCameraNode("DefaultCamera");
+    auto cameraNodeResult = scene.GetDefaultCameraNode();
     MLG_CHECK(cameraNodeResult, "Failed to get default camera node");
     CameraActor cameraActor(system->GetInputMapper(), *cameraNodeResult.Value());
 
@@ -766,9 +766,7 @@ MainLoop()
 
             const Rect& viewPanelRect = devUi.GetViewPanelRect();
 
-            MLG_CHECK(view.Render(cameraActor.GetTransform(),
-                cameraActor.GetProjectionSettings(),
-                viewPanelRect.GetDimensions()));
+            MLG_CHECK(view.Render(viewPanelRect.GetDimensions()));
             MLG_CHECK(view.Composite(*target, viewPanelRect));
         }
 

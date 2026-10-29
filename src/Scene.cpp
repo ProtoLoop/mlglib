@@ -103,8 +103,8 @@ AttachShapeToBody(const b3BodyId bodyId, const Mass& mass, const ColliderResourc
 }
 
 Result<RigidBodyIdentifier>
-CreateRigidBody(const SceneNode& node,
-    const RigidBodyResource& rigidBodyRsrc,
+CreateRigidBody(const RigidBodyResource& rigidBodyRsrc,
+    const TrTransformf& localTransform,
     const std::span<const ColliderResource> colliderRsrcs,
     const WorldIdentifier worldId)
 {
@@ -125,8 +125,8 @@ CreateRigidBody(const SceneNode& node,
             return Result<>::Fail;
     }
 
-    const Vec3f& pos = node.GetLocalTransform().T;
-    const Vec4f rot = node.GetLocalTransform().R.ToVector();
+    const Vec3f& pos = localTransform.T;
+    const Vec4f rot = localTransform.R.ToVector();
     bodyDef.position = b3Pos{ .x = pos.x, .y = pos.y, .z = pos.z };
     bodyDef.rotation = b3Quat //
         {
@@ -298,7 +298,8 @@ CollectPhysicsNodes(const WorldIdentifier worldId,
 
         const std::span colliders = resourceBundle.GetColliders(rigidBody);
 
-        auto bodyId = CreateRigidBody(sceneNode, rigidBody, colliders, worldId);
+        auto bodyId =
+            CreateRigidBody(rigidBody, rootNodeDataResult->m_LocalTransform, colliders, worldId);
         MLG_CHECK(bodyId, "Failed to create rigid body for node");
 
         physicsNodes.emplace_back(*rootNodeDataResult.Value(), *bodyId);
@@ -524,11 +525,11 @@ Scene::UpdateWorldTransforms()
     {
         if(!node.GetParent())
         {
-            node.m_WsMatrix = node.GetLocalTransform().ToMatrix();
+            node.m_WsMatrix = node.GetLsMatrix();
         }
         else
         {
-            node.m_WsMatrix = node.GetParent()->GetWsMatrix() * node.GetLocalTransform().ToMatrix();
+            node.m_WsMatrix = node.GetParent()->GetWsMatrix() * node.GetLsMatrix();
         }
     }
 }

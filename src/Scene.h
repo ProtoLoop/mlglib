@@ -34,7 +34,18 @@ public:
     std::span<ModelNode> GetAllModelNodes() { return m_ModelNodes; }
 
     Result<CameraNode*> GetCameraNode(const std::string_view name);
+
     Result<const CameraNode*> GetCameraNode(const std::string_view name) const;
+
+    Result<CameraNode*> GetDefaultCameraNode()
+    {
+        return GetCameraNode(CameraNode::kDefaultCameraName);
+    }
+
+    Result<const CameraNode*> GetDefaultCameraNode() const
+    {
+        return GetCameraNode(CameraNode::kDefaultCameraName);
+    }
 
     Result<> SetActive(const PhysicsNode& physicsNode, bool active);
 

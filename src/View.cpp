@@ -184,9 +184,7 @@ View::Create(System& system,
 }
 
 Result<>
-View::Render(const TrTransformf& wsCameraXForm,
-    const ProjectionSettings& projectionSettings,
-    const Dimension2d& dstExtents)
+View::Render(const Dimension2d& dstExtents)
 {
     MLG_SCOPED_TIMER("View.Render");
 
@@ -203,14 +201,19 @@ View::Render(const TrTransformf& wsCameraXForm,
     const wgpu::CommandEncoder cmdEncoder = gpuDevice.CreateCommandEncoder(&encoderDesc);
     MLG_CHECK(cmdEncoder, "Failed to create command encoder");
 
-    ProjectionSettings updatedSettings = projectionSettings;
+    const auto cameraResult = m_Scene->GetDefaultCameraNode();
+    MLG_CHECK(cameraResult, "Failed to get default camera node");
+
+    ProjectionSettings updatedSettings = cameraResult->GetProjectionSettings();
     updatedSettings.AspectRatio =
         static_cast<float>(dstExtents.GetWidth()) / static_cast<float>(dstExtents.GetHeight());
     auto frustumResult = Frustum::Create(updatedSettings);
     MLG_CHECK(frustumResult);
     const Frustum frustum = *frustumResult;
 
-    MLG_CHECK(TransformNodes(gpuDevice, cmdEncoder, wsCameraXForm, frustum));
+    const TrTransformf& cameraXForm = cameraResult->GetLocalTransform();
+
+    MLG_CHECK(TransformNodes(gpuDevice, cmdEncoder, cameraXForm, frustum));
 
     if(!m_ColorPassOutputs
         || m_ColorPassOutputs->RenderTarget->GetWidth() != dstExtents.GetWidth()
@@ -236,7 +239,7 @@ View::Render(const TrTransformf& wsCameraXForm,
     MLG_CHECK(m_ColorPass->SetInputs(colorPassInputs));
     MLG_CHECK(m_ColorPass->SetOutputs(*m_ColorPassOutputs));
 
-    CullMeshes(wsCameraXForm, frustum);
+    CullMeshes(cameraXForm, frustum);
 
     MLG_CHECK(m_ColorPass->Execute(cmdEncoder, m_CulledMeshes, m_MaterialProperties));
 

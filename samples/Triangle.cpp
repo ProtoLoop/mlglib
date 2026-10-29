@@ -4,9 +4,8 @@
 #include "Level.h"
 #include "Log.h"
 #include "PerfMetrics.h"
-#include "ProjectionSettings.h"
 #include "ResourceBundle.h"
-#include "SceneTypes.h"
+#include "Scene.h"
 #include "Shell.h"
 #include "System.h"
 #include "View.h"
@@ -129,6 +128,8 @@ private:
 
     TrTransformf m_CameraXForm{ .T{ 0, 0, -4 } };
 
+    Timer m_FrameTimer;
+
     Stage m_Stage{ Stage::None };
 };
 
@@ -158,6 +159,10 @@ void
 TriangleApp::OnUpdate()
 {
     MLG_ASSERT(m_System);
+
+    const float elapsedSeconds = m_FrameTimer.GetElapsedSeconds();
+
+    m_FrameTimer.Restart();
 
     switch(m_Stage)
     {
@@ -195,9 +200,22 @@ TriangleApp::OnUpdate()
             }
             else if(!m_System->IsMinimized())
             {
-                if(!MLG_VERIFY(Render(), "Failed to render view"))
+                auto cameraResult = m_Level->GetScene().GetDefaultCameraNode();
+                if(!cameraResult)
                 {
+                    MLG_ERROR("Failed to get default camera node");
                     m_Stage = Stage::Stopped;
+                }
+                else
+                {
+                    cameraResult->SetTargetLocalTransform(m_CameraXForm);
+
+                    m_Level->GetScene().Update(elapsedSeconds);
+
+                    if(!MLG_VERIFY(Render(), "Failed to render view"))
+                    {
+                        m_Stage = Stage::Stopped;
+                    }
                 }
             }
             break;
@@ -215,11 +233,7 @@ TriangleApp::Render()
 
     const GpuHelper& gpuHelper = m_System->GetGpuHelper();
 
-    const Dimension2d screenDims = gpuHelper.GetScreenDimensions();
-
-    MLG_CHECK(m_Level->GetView().Render(m_CameraXForm,
-                  ProjectionSettings{},
-                  screenDims),
+    MLG_CHECK(m_Level->GetView().Render(gpuHelper.GetScreenDimensions()),
         "Failed to render view");
 
     auto target = gpuHelper.GetSwapChainTexture();

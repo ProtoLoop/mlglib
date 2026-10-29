@@ -1296,7 +1296,7 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
     bool hasDefaultCamera = false;
     for(const RootNodeDef& rootNodeDef : rootNodeDefs)
     {
-        if(rootNodeDef.Camera && rootNodeDef.Name == "DefaultCamera")
+        if(rootNodeDef.Camera && rootNodeDef.Name == CameraNode::kDefaultCameraName)
         {
             hasDefaultCamera = true;
         }
@@ -1311,7 +1311,7 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
         // Add a default camera node
         const RootNodeDef defaultCameraNodeDef
         {
-            .Name{"DefaultCamera"},
+            .Name{CameraNode::kDefaultCameraName},
             .Camera{CameraDef{}}
         };
 

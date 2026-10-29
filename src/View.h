@@ -38,13 +38,11 @@ public:
         const ResourceBundle& resourceBundle,
         const Scene& scene);
 
-    /// Renders the scene from the perspective of the camera into the specified extents.
-    /// The render target will be resized if necessary to accommodate the specified extents.
-    /// Currently Render() overrides the aspect ratio of the projection settings to match
-    /// the destination extents.
-    Result<> Render(const TrTransformf& wsCameraXForm,
-        const ProjectionSettings& projectionSettings,
-        const Dimension2d& dstExtents);
+    /// Renders the scene from the perspective of the camera into a render target with the specified
+    /// extents. The render target will be resized if necessary to accommodate the specified
+    /// extents. Currently Render() overrides the aspect ratio of the camera's projection settings
+    /// to match the destination extents.
+    Result<> Render(const Dimension2d& dstExtents);
 
     Result<> Composite(const GpuRenderTarget& target);
 

@@ -188,7 +188,7 @@ TranslucentApp::OnUpdate()
                 {
                     m_Level = std::move(*levelResult);
 
-                    if(auto cameraNodeResult = m_Level->GetScene().GetCameraNode("DefaultCamera");
+                    if(auto cameraNodeResult = m_Level->GetScene().GetDefaultCameraNode();
                         !cameraNodeResult)
                     {
                         MLG_ERROR("Failed to get default camera node");
@@ -263,11 +263,7 @@ TranslucentApp::Render()
 
     const GpuHelper& gpuHelper = m_System->GetGpuHelper();
 
-    const Dimension2d screenDims = gpuHelper.GetScreenDimensions();
-
-    MLG_CHECK(m_Level->GetView().Render(m_CameraActor->GetTransform(),
-                  m_CameraActor->GetProjectionSettings(),
-                  screenDims),
+    MLG_CHECK(m_Level->GetView().Render(gpuHelper.GetScreenDimensions()),
         "Failed to render view");
 
     auto targetResult = gpuHelper.GetSwapChainTexture();

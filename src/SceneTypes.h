@@ -357,16 +357,18 @@ public:
     SceneNode& operator=(SceneNode&&) = delete;
 
     std::string_view GetName() const { return m_Name; }
-    TrsTransformf GetLocalTransform() const
+
+    Mat44f GetLsMatrix() const
     {
         if(std::holds_alternative<RootNodeData>(m_NodeData))
         {
-            return std::get<RootNodeData>(m_NodeData).m_LocalTransform.ToTrsTransform();
+            return std::get<RootNodeData>(m_NodeData).m_LocalTransform.ToMatrix();
         }
-        return std::get<ChildNodeData>(m_NodeData).m_LocalTransform;
+        return std::get<ChildNodeData>(m_NodeData).m_LocalTransform.ToMatrix();
     }
 
     const Mat44f& GetWsMatrix() const { return m_WsMatrix; }
+
     const SceneNode* GetParent() const
     {
         if(std::holds_alternative<ChildNodeData>(m_NodeData))
@@ -385,32 +387,6 @@ public:
 
 private:
     friend class Scene;
-
-    Result<> SetLocalTransform(const TrTransformf& localTransform)
-    {
-        if(std::holds_alternative<RootNodeData>(m_NodeData))
-        {
-            std::get<RootNodeData>(m_NodeData).m_LocalTransform = localTransform;
-            return Result<>::Ok;
-        }
-        if(std::holds_alternative<ChildNodeData>(m_NodeData))
-        {
-            std::get<ChildNodeData>(m_NodeData).m_LocalTransform = localTransform.ToTrsTransform();
-            return Result<>::Ok;
-        }
-
-        MLG_ERROR("Invalid node data");
-        return Result<>::Fail;
-    }
-
-    Result<> SetLocalTransform(const TrsTransformf& localTransform)
-    {
-        MLG_CHECKV(std::holds_alternative<ChildNodeData>(m_NodeData),
-            "Node does not contain a child node");
-
-        std::get<ChildNodeData>(m_NodeData).m_LocalTransform = localTransform;
-        return Result<>::Ok;
-    }
 
     std::string_view m_Name;
     std::variant<RootNodeData, ChildNodeData> m_NodeData;
@@ -517,6 +493,8 @@ private:
 class CameraNode
 {
 public:
+    static constexpr std::string_view kDefaultCameraName{ "DefaultCamera" };
+
     CameraNode(RootNodeData& rootNodeData, const ProjectionSettings& projectionSettings);
 
     CameraNode() = delete;
