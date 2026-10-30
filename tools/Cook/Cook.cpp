@@ -354,7 +354,7 @@ Cook(const CmdLineArgs& args, ThreadPool& threadPool)
 
     const ResourceBundle bundle = std::move(*buildResult);
 
-    const std::span<const TextureResource> textureRsrcs = bundle.GetTextures();
+    const std::span<const TextureResource> textureRsrcs = bundle.GetResources<TextureResource>();
 
     std::vector<std::string_view> texturePaths;
     texturePaths.reserve(textureRsrcs.size());

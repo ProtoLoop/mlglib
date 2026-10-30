@@ -96,6 +96,8 @@ struct ModelInstanceResource;
 struct ColliderResource;
 struct RigidBodyResource;
 struct CameraResource;
+struct PointLightResource;
+struct DirectionalLightResource;
 struct SceneNodeResource;
 
 class ResourceBundleBuilder;
@@ -175,6 +177,8 @@ public:
     X(OffsetType, CollidersOffset, kInvalidOffset)                                                 \
     X(OffsetType, RigidBodiesOffset, kInvalidOffset)                                               \
     X(OffsetType, CamerasOffset, kInvalidOffset)                                                   \
+    X(OffsetType, PointLightsOffset, kInvalidOffset)                                               \
+    X(OffsetType, DirectionalLightsOffset, kInvalidOffset)                                         \
     X(OffsetType, NodesOffset, kInvalidOffset)                                                     \
     X(IndexType, CharsLength, 0)                                                                   \
     X(IndexType, StringCount, 0)                                                                   \
@@ -188,6 +192,8 @@ public:
     X(IndexType, ColliderCount, 0)                                                                 \
     X(IndexType, RigidBodyCount, 0)                                                                \
     X(IndexType, CameraCount, 0)                                                                   \
+    X(IndexType, PointLightCount, 0)                                                               \
+    X(IndexType, DirectionalLightCount, 0)                                                         \
     X(IndexType, NodeCount, 0)
 
     struct Header
@@ -195,7 +201,7 @@ public:
         RESOURCE_BUNDLE_HEADER_FIELDS(MLG_DECLARE_FIELD)
     };
     static_assert(BinaryStruct<Header>);
-    MLG_ASSERT_FIELD_COUNT(RESOURCE_BUNDLE_HEADER_FIELDS, 31);
+    MLG_ASSERT_FIELD_COUNT(RESOURCE_BUNDLE_HEADER_FIELDS, 35);
     MLG_ASSERT_NO_PADDING(Header, RESOURCE_BUNDLE_HEADER_FIELDS);
     MLG_ASSERT_OFFSET(Header, Checksum, 0)
     MLG_ASSERT_OFFSET(Header, Magic0, 4)
@@ -214,21 +220,25 @@ public:
     MLG_ASSERT_OFFSET(Header, CollidersOffset, 56)
     MLG_ASSERT_OFFSET(Header, RigidBodiesOffset, 60)
     MLG_ASSERT_OFFSET(Header, CamerasOffset, 64)
-    MLG_ASSERT_OFFSET(Header, NodesOffset, 68)
-    MLG_ASSERT_OFFSET(Header, CharsLength, 72)
-    MLG_ASSERT_OFFSET(Header, StringCount, 76)
-    MLG_ASSERT_OFFSET(Header, TextureCount, 80)
-    MLG_ASSERT_OFFSET(Header, MaterialCount, 84)
-    MLG_ASSERT_OFFSET(Header, VertexCount, 88)
-    MLG_ASSERT_OFFSET(Header, IndexCount, 92)
-    MLG_ASSERT_OFFSET(Header, MeshCount, 96)
-    MLG_ASSERT_OFFSET(Header, ModelCount, 100)
-    MLG_ASSERT_OFFSET(Header, ModelInstanceCount, 104)
-    MLG_ASSERT_OFFSET(Header, ColliderCount, 108)
-    MLG_ASSERT_OFFSET(Header, RigidBodyCount, 112)
-    MLG_ASSERT_OFFSET(Header, CameraCount, 116)
-    MLG_ASSERT_OFFSET(Header, NodeCount, 120)
-    MLG_ASSERT_SIZE(Header, 124)
+    MLG_ASSERT_OFFSET(Header, PointLightsOffset, 68)
+    MLG_ASSERT_OFFSET(Header, DirectionalLightsOffset, 72)
+    MLG_ASSERT_OFFSET(Header, NodesOffset, 76)
+    MLG_ASSERT_OFFSET(Header, CharsLength, 80)
+    MLG_ASSERT_OFFSET(Header, StringCount, 84)
+    MLG_ASSERT_OFFSET(Header, TextureCount, 88)
+    MLG_ASSERT_OFFSET(Header, MaterialCount, 92)
+    MLG_ASSERT_OFFSET(Header, VertexCount, 96)
+    MLG_ASSERT_OFFSET(Header, IndexCount, 100)
+    MLG_ASSERT_OFFSET(Header, MeshCount, 104)
+    MLG_ASSERT_OFFSET(Header, ModelCount, 108)
+    MLG_ASSERT_OFFSET(Header, ModelInstanceCount, 112)
+    MLG_ASSERT_OFFSET(Header, ColliderCount, 116)
+    MLG_ASSERT_OFFSET(Header, RigidBodyCount, 120)
+    MLG_ASSERT_OFFSET(Header, CameraCount, 124)
+    MLG_ASSERT_OFFSET(Header, PointLightCount, 128)
+    MLG_ASSERT_OFFSET(Header, DirectionalLightCount, 132)
+    MLG_ASSERT_OFFSET(Header, NodeCount, 136)
+    MLG_ASSERT_SIZE(Header, 140)
 
     ResourceBundle() = default;
     ~ResourceBundle() = default;
@@ -243,37 +253,16 @@ public:
     /// Invalidates all previously returned spans and string views.
     void Clear() { std::vector<std::byte>().swap(m_Buffer); }
 
-    std::span<const char> GetChars() const;
-
-    std::span<const StringResource> GetStrings() const;
-
-    std::span<const TextureResource> GetTextures() const;
-
-    std::span<const MaterialResource> GetMaterials() const;
-
-    std::span<const Vertex> GetVertices() const;
-
-    std::span<const VertexIndex> GetIndices() const;
-
-    std::span<const MeshResource> GetMeshes() const;
+    /// Returns a span of resources of the specified type.
+    /// E.g. GetResources<TextureResource>() returns a span of all texture resources.
+    template<typename RsrcType>
+    std::span<const RsrcType> GetResources() const;
 
     /// Returns a span of meshes associated with the model resource.
     std::span<const MeshResource> GetMeshes(const ModelResource& modelRsrc) const;
 
-    std::span<const ModelResource> GetModels() const;
-
-    std::span<const ModelInstanceResource> GetModelInstances() const;
-
-    std::span<const ColliderResource> GetColliders() const;
-
     /// Returns a span of colliders associated with the rigid body resource.
     std::span<const ColliderResource> GetColliders(const RigidBodyResource& rigidBodyRsrc) const;
-
-    std::span<const RigidBodyResource> GetRigidBodies() const;
-
-    std::span<const CameraResource> GetCameras() const;
-
-    std::span<const SceneNodeResource> GetNodes() const;
 
     /// Returns the string view corresponding to the string resource.
     std::string_view GetStringView(const StringResource& stringResource) const;
@@ -345,19 +334,12 @@ private:
     }
 
     void AppendHeader(const ResourceBundle::OffsetType totalSize);
-    Result<> Append(const std::span<const char>& chars);
-    Result<> Append(const std::span<const StringResource>& strings);
-    Result<> Append(const std::span<const TextureResource>& textures);
-    Result<> Append(const std::span<const MaterialResource>& materials);
-    Result<> Append(const std::span<const Vertex>& vertices);
-    Result<> Append(const std::span<const VertexIndex>& indices);
-    Result<> Append(const std::span<const MeshResource>& meshes);
-    Result<> Append(const std::span<const ModelResource>& models);
-    Result<> Append(const std::span<const ModelInstanceResource>& modelInstances);
-    Result<> Append(const std::span<const ColliderResource>& colliders);
-    Result<> Append(const std::span<const RigidBodyResource>& rigidBodies);
-    Result<> Append(const std::span<const CameraResource>& cameras);
-    Result<> Append(const std::span<const SceneNodeResource>& nodes);
+
+    /// Appends a span of items of type T to the resource bundle.
+    /// Updates the corresponding header fields for offset and length.
+    /// Ensures that the header fields are properly initialized and not already set.
+    template<typename RsrcType>
+    Result<> AppendResources(const std::span<const RsrcType> items);
 
     std::vector<std::byte> m_Buffer;
 };
@@ -673,6 +655,44 @@ MLG_ASSERT_FIELD_COUNT(CAMERA_RESOURCE_FIELDS, 1);
 MLG_ASSERT_NO_PADDING(CameraResource, CAMERA_RESOURCE_FIELDS);
 MLG_ASSERT_OFFSET(CameraResource, NodeIndex, 0)
 MLG_ASSERT_SIZE(CameraResource, 4)
+
+/// PointLightResource
+
+#define POINT_LIGHT_RESOURCE_FIELDS(X)                                                             \
+    X(ResourceBundle::IndexType, NodeIndex, ResourceBundle::kInvalidIndex)                         \
+    X(Vec3f, Position, Vec3f{ 0.0f, 0.0f, 0.0f })                                                  \
+    X(RgbaColorf, Color, RgbaColorf{ 1.0f, 1.0f, 1.0f, 1.0f })
+
+struct PointLightResource final
+{
+    POINT_LIGHT_RESOURCE_FIELDS(MLG_DECLARE_FIELD)
+};
+static_assert(BinaryStruct<PointLightResource>);
+MLG_ASSERT_FIELD_COUNT(POINT_LIGHT_RESOURCE_FIELDS, 3);
+MLG_ASSERT_NO_PADDING(PointLightResource, POINT_LIGHT_RESOURCE_FIELDS);
+MLG_ASSERT_OFFSET(PointLightResource, NodeIndex, 0)
+MLG_ASSERT_OFFSET(PointLightResource, Position, 4)
+MLG_ASSERT_OFFSET(PointLightResource, Color, 16)
+MLG_ASSERT_SIZE(PointLightResource, 32)
+
+/// DirectionalLightResource
+
+#define DIRECTIONAL_LIGHT_RESOURCE_FIELDS(X)                                                       \
+    X(ResourceBundle::IndexType, NodeIndex, ResourceBundle::kInvalidIndex)                         \
+    X(Vec3f, Direction, Vec3f{ 0.0f, -1.0f, 0.0f })                                                \
+    X(RgbaColorf, Color, RgbaColorf{ 1.0f, 1.0f, 1.0f, 1.0f })
+
+struct DirectionalLightResource final
+{
+    DIRECTIONAL_LIGHT_RESOURCE_FIELDS(MLG_DECLARE_FIELD)
+};
+static_assert(BinaryStruct<DirectionalLightResource>);
+MLG_ASSERT_FIELD_COUNT(DIRECTIONAL_LIGHT_RESOURCE_FIELDS, 3);
+MLG_ASSERT_NO_PADDING(DirectionalLightResource, DIRECTIONAL_LIGHT_RESOURCE_FIELDS);
+MLG_ASSERT_OFFSET(DirectionalLightResource, NodeIndex, 0)
+MLG_ASSERT_OFFSET(DirectionalLightResource, Direction, 4)
+MLG_ASSERT_OFFSET(DirectionalLightResource, Color, 16)
+MLG_ASSERT_SIZE(DirectionalLightResource, 32)
 
 /// SceneNodeResource
 

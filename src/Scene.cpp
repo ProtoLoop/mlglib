@@ -165,7 +165,7 @@ size_t
 CalculateStringStorage(const ResourceBundle& resourceBundle)
 {
     size_t totalSize = 0;
-    const std::span nodeRsrcs = resourceBundle.GetNodes();
+    const std::span nodeRsrcs = resourceBundle.GetResources<SceneNodeResource>();
     for(const auto& nodeRsrc : nodeRsrcs)
     {
         totalSize += resourceBundle.GetStringView(nodeRsrc.Name).size();
@@ -178,9 +178,9 @@ CalculateStringStorage(const ResourceBundle& resourceBundle)
 Result<BoundedVector<SceneNode>>
 CollectNodes(const ResourceBundle& resourceBundle, BoundedVector<char>& stringStorage)
 {
-    const std::span nodeRsrcs = resourceBundle.GetNodes();
+    const std::span nodeRsrcs = resourceBundle.GetResources<SceneNodeResource>();
 
-    const bool haveCameras = !resourceBundle.GetCameras().empty();
+    const bool haveCameras = !resourceBundle.GetResources<CameraResource>().empty();
 
     size_t nodeCount = nodeRsrcs.size();
     if(!haveCameras)
@@ -232,7 +232,7 @@ CollectNodes(const ResourceBundle& resourceBundle, BoundedVector<char>& stringSt
 Result<BoundedVector<Mesh>>
 CollectMeshes(const ResourceBundle& resourceBundle)
 {
-    const std::span<const MeshResource> meshRsrcs = resourceBundle.GetMeshes();
+    const std::span<const MeshResource> meshRsrcs = resourceBundle.GetResources<MeshResource>();
     BoundedVector<Mesh> meshes(meshRsrcs.size());
 
     for(const MeshResource& mesh : meshRsrcs)
@@ -262,8 +262,8 @@ CollectModelNodes(const ResourceBundle& resourceBundle,
         ? std::vector<MeshInstance>().max_size()
         : static_cast<size_t>(std::numeric_limits<uint32_t>::max());
 
-    const std::span modelRsrcs = resourceBundle.GetModels();
-    const std::span modelInstanceRsrcs = resourceBundle.GetModelInstances();
+    const std::span modelRsrcs = resourceBundle.GetResources<ModelResource>();
+    const std::span modelInstanceRsrcs = resourceBundle.GetResources<ModelInstanceResource>();
 
     BoundedVector<ModelNode> modelNodes(modelInstanceRsrcs.size());
 
@@ -298,7 +298,7 @@ CollectPhysicsNodes(const WorldIdentifier worldId,
     const ResourceBundle& resourceBundle,
     const std::span<SceneNode> nodes)
 {
-    const std::span rigidBodies = resourceBundle.GetRigidBodies();
+    const std::span rigidBodies = resourceBundle.GetResources<RigidBodyResource>();
     BoundedVector<PhysicsNode> physicsNodes(rigidBodies.size());
 
     for(const RigidBodyResource& rigidBody : rigidBodies)
@@ -325,7 +325,7 @@ CollectPhysicsNodes(const WorldIdentifier worldId,
 Result<BoundedVector<CameraNode>>
 CollectCameraNodes(const ResourceBundle& resourceBundle, const std::span<SceneNode> nodes)
 {
-    const std::span cameras = resourceBundle.GetCameras();
+    const std::span cameras = resourceBundle.GetResources<CameraResource>();
 
     BoundedVector<CameraNode> cameraNodes(cameras.size());
 
@@ -386,7 +386,8 @@ Scene::Create(const ResourceBundle& resourceBundle)
     // Populate child nodes.
     const std::span nodeSpan = std::span(*sceneNodes);
 
-    for(const auto& [nodeRsrc, node] : std::views::zip(resourceBundle.GetNodes(), *sceneNodes))
+    for(const auto& [nodeRsrc, node] :
+        std::views::zip(resourceBundle.GetResources<SceneNodeResource>(), *sceneNodes))
     {
         if(nodeRsrc.ChildCount > 0)
         {

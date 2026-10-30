@@ -15,6 +15,7 @@
 #include <SDL3/SDL_stdinc.h>
 #include <span>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -33,7 +34,7 @@ std::less<MaterialDef>::operator()(const MaterialDef& lhs, const MaterialDef& rh
     {
         return cmp < 0;
     }
-    
+
     if(auto cmp = std::strong_order(lhs.Color.g, rhs.Color.g); cmp != 0)
     {
         return cmp < 0;
@@ -63,7 +64,7 @@ std::less<MaterialDef>::operator()(const MaterialDef& lhs, const MaterialDef& rh
     {
         return cmp < 0;
     }
-    
+
     return false;
 }
 
@@ -104,7 +105,8 @@ struct IndexEntry
     size_t Index;
 };
 
-/// Used when flattening a node hierarchy into a breadth-first ordered vector of FlatNodeDef objects.
+/// Used when flattening a node hierarchy into a breadth-first ordered vector of FlatNodeDef
+/// objects.
 struct PendingNode
 {
     NodeDefPointer Node;
@@ -196,12 +198,12 @@ FlattenNodesBreadthFirst(const std::span<const RootNodeDef> rootNodeDefs)
         pendingNodes.emplace_back(&rootNodeDef, kInvalidIndex);
     }
 
-     while(!pendingNodes.empty())
+    while(!pendingNodes.empty())
     {
         const PendingNode pendingNode = pendingNodes.front();
         pendingNodes.pop_front();
         const size_t curNodeIndex = flatNodes.size();
-        
+
         const FlatNodeDef flatNodeDef //
             {
                 .NodeDefPtr = pendingNode.Node,
@@ -283,7 +285,7 @@ CollectMeshDefs(const std::span<const ModelDef> modelDefs)
     return meshDefs;
 }
 
-/// Adds a string to the string resource map and character buffe.
+/// Adds a string to the string resource map and character buffer.
 Result<StringResource>
 AddString(StringLookup& stringResourceMap, std::vector<char>& chars, const std::string_view str)
 {
@@ -301,7 +303,8 @@ AddString(StringLookup& stringResourceMap, std::vector<char>& chars, const std::
         };
 
     MLG_CHECKV(!safeint::AddWillOverflow(charIndex, strLen, kMaxCharCount),
-        "Character buffer overflow: {}", str);
+        "Character buffer overflow: {}",
+        str);
 
     chars.append_range(str);
 
@@ -355,6 +358,7 @@ CollectStrings(const std::span<const FlatNodeDef> flatNodeDefs,
 
     return stringResourceMap;
 }
+
 Result<TextureLookup>
 CollectTextures(const std::span<const MeshDef* const> meshDefs,
     const StringLookup& stringIndexMap,
@@ -917,6 +921,87 @@ CollectCameras(const std::span<const FlatNodeDef> flatNodeDefs)
     return cameras;
 }
 
+PointLightResource
+MakeLightResource(const PointLightDef& pointLightDef, const size_t nodeIndex)
+{
+    return PointLightResource //
+        {
+            .NodeIndex = static_cast<IndexType>(nodeIndex),
+            .Position = pointLightDef.Position,
+            .Color = pointLightDef.Color,
+        };
+}
+
+DirectionalLightResource
+MakeLightResource(const DirectionalLightDef& directionalLightDef, const size_t nodeIndex)
+{
+    return DirectionalLightResource //
+        {
+            .NodeIndex = static_cast<IndexType>(nodeIndex),
+            .Direction = directionalLightDef.Direction,
+            .Color = directionalLightDef.Color,
+        };
+}
+
+template<typename DefType, typename ResourceType>
+Result<std::vector<ResourceType>>
+CollectLights(const std::span<const FlatNodeDef> flatNodeDefs)
+{
+    std::vector<ResourceType> lights;
+
+    static const size_t kMaxLightCount = std::min( //
+        {
+            static_cast<size_t>(kMaxVectorSize<ResourceType>),
+            static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
+        });
+
+    size_t count = 0;
+    for(const FlatNodeDef& flatNodeDef : flatNodeDefs)
+    {
+        const bool hasLight = std::visit(
+            [&](const auto* nodeDef)
+            {
+                return static_cast<bool>(nodeDef->Light)
+                    && std::holds_alternative<DefType>(*nodeDef->Light);
+            },
+            flatNodeDef.NodeDefPtr);
+
+        if(hasLight)
+        {
+            MLG_CHECKV(!safeint::AddWillOverflow(count, 1uz, kMaxLightCount),
+                "Light count overflow");
+            ++count;
+        }
+    }
+
+    lights.reserve(count);
+
+    for(size_t nodeIndex = 0; nodeIndex < flatNodeDefs.size(); ++nodeIndex)
+    {
+        const FlatNodeDef& flatNodeDef = flatNodeDefs[nodeIndex];
+
+        const auto result = std::visit(
+            [&](const auto* nodeDef) -> Result<>
+            {
+                const std::optional<LightDef>& optLight = nodeDef->Light;
+
+                if(optLight && std::holds_alternative<DefType>(*optLight))
+                {
+                    const DefType& lightDef = std::get<DefType>(*optLight);
+
+                    lights.push_back(MakeLightResource(lightDef, nodeIndex));
+                }
+
+                return Result<>::Ok;
+            },
+            flatNodeDef.NodeDefPtr);
+
+        MLG_CHECK(result);
+    }
+
+    return lights;
+}
+
 Result<std::vector<SceneNodeResource>>
 CollectSceneNodes(const std::span<const FlatNodeDef> flatNodeDefs,
     const StringLookup& stringIndexMap)
@@ -928,7 +1013,7 @@ CollectSceneNodes(const std::span<const FlatNodeDef> flatNodeDefs,
             static_cast<size_t>(kMaxVectorSize<SceneNodeResource>),
             static_cast<size_t>(std::numeric_limits<uint32_t>::max()),
         });
-    
+
     MLG_CHECKV(flatNodeDefs.size() <= kMaxSceneNodeCount, "Scene node count out of range");
 
     sceneNodes.reserve(flatNodeDefs.size());
@@ -954,7 +1039,7 @@ CollectSceneNodes(const std::span<const FlatNodeDef> flatNodeDefs,
                         .LocalRot = nodeDef->Transform.R.ToVector(),
                     };
 
-                if constexpr (std::is_same_v<std::decay_t<decltype(*nodeDef)>, ChildNodeDef>)
+                if constexpr(std::is_same_v<std::decay_t<decltype(*nodeDef)>, ChildNodeDef>)
                 {
                     sceneNode.LocalScale = nodeDef->Transform.S;
                 }
@@ -1022,7 +1107,9 @@ AppendSpan(const std::span<const T> span, std::vector<std::byte>& buffer)
 
     const std::span bytes = AsBytes(span);
 
-    MLG_CHECKV(!safeint::AddWillOverflow(buffer.size(), bytes.size(), static_cast<size_t>(header->TotalSize)),
+    MLG_CHECKV(!safeint::AddWillOverflow(buffer.size(),
+                   bytes.size(),
+                   static_cast<size_t>(header->TotalSize)),
         "Appending span exceeds bundle capacity");
 
     buffer.insert(buffer.end(), bytes.begin(), bytes.end());
@@ -1075,76 +1162,79 @@ ResourceBundle::GetBuffer() const
 {
     MLG_ASSERT(!m_Buffer.empty(), "Buffer is empty");
 
-        return std::span<const std::byte>(m_Buffer);
-    }
-
-std::span<const char>
-ResourceBundle::GetChars() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<char>(header->CharsOffset, header->CharsLength)
-        : std::span<const char>();
+    return std::span<const std::byte>(m_Buffer);
 }
 
-std::span<const StringResource>
-ResourceBundle::GetStrings() const
+namespace
 {
+/// Provides compile-time information about the offset, length, and name of a header field for a
+/// resource type T.
+/// Used in the template Append() method for appending resource data to the bundle.
+template<typename T>
+struct HeaderFields
+{
+    /// Pointer to the offset field in the header for this resource type.
+    static constexpr OffsetType Header::* Offset = nullptr;
+    /// Pointer to the length field in the header for this resource type.
+    static constexpr IndexType Header::* Length = nullptr;
+    /// Name of resource type T. Used for logging.
+    static constexpr const char* Name = "UNKNOWN";
+};
+} // namespace
+
+template<typename RsrcType>
+std::span<const RsrcType>
+ResourceBundle::GetResources() const
+{
+    static_assert(HeaderFields<RsrcType>::Offset != nullptr, "Header offset is not initialized");
+    static_assert(HeaderFields<RsrcType>::Length != nullptr, "Header length is not initialized");
+
     const Header* header = GetHeader();
     return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<StringResource>(header->StringsOffset, header->StringCount)
-        : std::span<const StringResource>();
+        ? GetSpan<RsrcType>(header->*HeaderFields<RsrcType>::Offset,
+              header->*HeaderFields<RsrcType>::Length)
+        : std::span<const RsrcType>();
 }
 
-std::span<const TextureResource>
-ResourceBundle::GetTextures() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<TextureResource>(header->TexturesOffset, header->TextureCount)
-        : std::span<const TextureResource>();
-}
+/// Defines the header fields for a specific resource type T.
+#define HEADER_FIELDS(T, offset, length, name)                                                     \
+    template<>                                                                                     \
+    struct HeaderFields<T>                                                                         \
+    {                                                                                              \
+        static constexpr OffsetType Header::* Offset = &Header::offset;                            \
+        static constexpr IndexType Header::* Length = &Header::length;                             \
+        MLG_ASSERT_ONLY(static constexpr const char* Name = name;)                                 \
+    };
 
-std::span<const MaterialResource>
-ResourceBundle::GetMaterials() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<MaterialResource>(header->MaterialsOffset, header->MaterialCount)
-        : std::span<const MaterialResource>();
-}
+#define INSTANTIATE_GET_RESOURCES(T, offset, length, name)                                         \
+    HEADER_FIELDS(T, offset, length, name)                                                         \
+    template std::span<const T> ResourceBundle::GetResources<T>() const;
 
-std::span<const Vertex>
-ResourceBundle::GetVertices() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<Vertex>(header->VerticesOffset, header->VertexCount)
-        : std::span<const Vertex>();
-}
+INSTANTIATE_GET_RESOURCES(char, CharsOffset, CharsLength, "Chars")
+INSTANTIATE_GET_RESOURCES(StringResource, StringsOffset, StringCount, "Strings")
+INSTANTIATE_GET_RESOURCES(TextureResource, TexturesOffset, TextureCount, "Textures")
+INSTANTIATE_GET_RESOURCES(MaterialResource, MaterialsOffset, MaterialCount, "Materials")
+INSTANTIATE_GET_RESOURCES(Vertex, VerticesOffset, VertexCount, "Vertices")
+INSTANTIATE_GET_RESOURCES(VertexIndex, IndicesOffset, IndexCount, "Indices")
+INSTANTIATE_GET_RESOURCES(MeshResource, MeshesOffset, MeshCount, "Meshes")
+INSTANTIATE_GET_RESOURCES(ModelResource, ModelsOffset, ModelCount, "Models")
+INSTANTIATE_GET_RESOURCES(
+    ModelInstanceResource, ModelInstancesOffset, ModelInstanceCount, "Model Instances")
+INSTANTIATE_GET_RESOURCES(ColliderResource, CollidersOffset, ColliderCount, "Colliders")
+INSTANTIATE_GET_RESOURCES(RigidBodyResource, RigidBodiesOffset, RigidBodyCount, "Rigid Bodies")
+INSTANTIATE_GET_RESOURCES(CameraResource, CamerasOffset, CameraCount, "Cameras")
+INSTANTIATE_GET_RESOURCES(PointLightResource, PointLightsOffset, PointLightCount, "Point Lights")
+INSTANTIATE_GET_RESOURCES(
+    DirectionalLightResource, DirectionalLightsOffset, DirectionalLightCount, "Directional Lights")
+INSTANTIATE_GET_RESOURCES(SceneNodeResource, NodesOffset, NodeCount, "Scene Nodes")
 
-std::span<const VertexIndex>
-ResourceBundle::GetIndices() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<VertexIndex>(header->IndicesOffset, header->IndexCount)
-        : std::span<const VertexIndex>();
-}
-
-std::span<const MeshResource>
-ResourceBundle::GetMeshes() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<MeshResource>(header->MeshesOffset, header->MeshCount)
-        : std::span<const MeshResource>();
-}
+#undef INSTANTIATE_GET_RESOURCES
+#undef HEADER_FIELDS
 
 std::span<const MeshResource>
 ResourceBundle::GetMeshes(const ModelResource& modelRsrc) const
 {
-    const std::span meshes = GetMeshes();
+    const std::span meshes = GetResources<MeshResource>();
 
     if(MLG_VERIFY(modelRsrc.FirstMeshIndex < meshes.size())
         && MLG_VERIFY(meshes.size() - modelRsrc.FirstMeshIndex >= modelRsrc.MeshCount))
@@ -1155,37 +1245,10 @@ ResourceBundle::GetMeshes(const ModelResource& modelRsrc) const
     return std::span<const MeshResource>();
 }
 
-std::span<const ModelResource>
-ResourceBundle::GetModels() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<ModelResource>(header->ModelsOffset, header->ModelCount)
-        : std::span<const ModelResource>();
-}
-
-std::span<const ModelInstanceResource>
-ResourceBundle::GetModelInstances() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<ModelInstanceResource>(header->ModelInstancesOffset, header->ModelInstanceCount)
-        : std::span<const ModelInstanceResource>();
-}
-
-std::span<const ColliderResource>
-ResourceBundle::GetColliders() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<ColliderResource>(header->CollidersOffset, header->ColliderCount)
-        : std::span<const ColliderResource>();
-}
-
 std::span<const ColliderResource>
 ResourceBundle::GetColliders(const RigidBodyResource& rigidBodyRsrc) const
 {
-    const std::span colliders = GetColliders();
+    const std::span colliders = GetResources<ColliderResource>();
 
     if(MLG_VERIFY(rigidBodyRsrc.FirstColliderIndex < colliders.size())
         && MLG_VERIFY(
@@ -1197,37 +1260,10 @@ ResourceBundle::GetColliders(const RigidBodyResource& rigidBodyRsrc) const
     return std::span<const ColliderResource>();
 }
 
-std::span<const RigidBodyResource>
-ResourceBundle::GetRigidBodies() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<RigidBodyResource>(header->RigidBodiesOffset, header->RigidBodyCount)
-        : std::span<const RigidBodyResource>();
-}
-
-std::span<const CameraResource>
-ResourceBundle::GetCameras() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<CameraResource>(header->CamerasOffset, header->CameraCount)
-        : std::span<const CameraResource>();
-}
-
-std::span<const SceneNodeResource>
-ResourceBundle::GetNodes() const
-{
-    const Header* header = GetHeader();
-    return MLG_VERIFY(header, "Header is not initialized")
-        ? GetSpan<SceneNodeResource>(header->NodesOffset, header->NodeCount)
-        : std::span<const SceneNodeResource>();
-}
-
 std::string_view
 ResourceBundle::GetStringView(const StringResource& stringResource) const
 {
-    const std::span<const char> chars = GetChars();
+    const std::span<const char> chars = GetResources<char>();
     if(!MLG_VERIFY((stringResource.CharIndex < chars.size())
                && (chars.size() - stringResource.CharIndex >= stringResource.Length),
            "Invalid string resource"))
@@ -1269,13 +1305,14 @@ ResourceBundle::Validate(const std::span<const std::byte>& buffer)
     {
         return false;
     }
-    
+
     return true;
 }
 
 // private:
 
-const ResourceBundle::Header* ResourceBundle::GetHeader() const
+const ResourceBundle::Header*
+ResourceBundle::GetHeader() const
 {
     if(!MLG_VERIFY(m_Buffer.size() >= sizeof(Header), "Buffer is empty"))
     {
@@ -1286,6 +1323,30 @@ const ResourceBundle::Header* ResourceBundle::GetHeader() const
 }
 
 // ResourceBundleBuilder
+
+// private:
+
+template<typename RsrcType>
+Result<>
+ResourceBundleBuilder::AppendResources(const std::span<const RsrcType> items)
+{
+    static_assert(HeaderFields<RsrcType>::Offset != nullptr, "Header offset is not initialized");
+    static_assert(HeaderFields<RsrcType>::Length != nullptr, "Header length is not initialized");
+
+    Header* h = GetHeader();
+
+    MLG_CHECKV(h != nullptr, "Header is not initialized");
+    MLG_ASSERT(h->*HeaderFields<RsrcType>::Offset == kInvalidOffset,
+        "{} already appended",
+        HeaderFields<RsrcType>::Name);
+
+    AppendPad<RsrcType>(m_Buffer);
+    h->*HeaderFields<RsrcType>::Offset = static_cast<OffsetType>(m_Buffer.size());
+    h->*HeaderFields<RsrcType>::Length = static_cast<IndexType>(items.size());
+    return AppendSpan(items, m_Buffer);
+}
+
+// public:
 
 Result<ResourceBundle>
 ResourceBundleBuilder::Build(const SceneDef& sceneDef)
@@ -1329,6 +1390,11 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
     MLG_CHECK(rigidBodies);
     const auto cameras = CollectCameras(*flatNodeDefs);
     MLG_CHECK(cameras);
+    const auto pointLights = CollectLights<PointLightDef, PointLightResource>(*flatNodeDefs);
+    MLG_CHECK(pointLights);
+    const auto directionalLights =
+        CollectLights<DirectionalLightDef, DirectionalLightResource>(*flatNodeDefs);
+    MLG_CHECK(directionalLights);
     const auto nodes = CollectSceneNodes(*flatNodeDefs, *stringIndexMap);
     MLG_CHECK(nodes);
 
@@ -1339,6 +1405,7 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
 
     size_t totalSize = sizeof(Header);
 
+    // Lambda to add the size of a collection to the total size and check for overflow
     auto addAndCheckOverflow = [&](const auto& container) -> Result<>
     {
         using Container = std::decay_t<decltype(container)>;
@@ -1358,38 +1425,57 @@ ResourceBundleBuilder::Build(const SceneDef& sceneDef, const Options& options)
         return Result<>::Ok;
     };
 
-    MLG_CHECK(addAndCheckOverflow(chars));
-    MLG_CHECK(addAndCheckOverflow(strings));
-    MLG_CHECK(addAndCheckOverflow(textures));
-    MLG_CHECK(addAndCheckOverflow(materials));
-    MLG_CHECK(addAndCheckOverflow(*vertices));
-    MLG_CHECK(addAndCheckOverflow(*indices));
-    MLG_CHECK(addAndCheckOverflow(*meshes));
-    MLG_CHECK(addAndCheckOverflow(models));
-    MLG_CHECK(addAndCheckOverflow(*modelInstances));
-    MLG_CHECK(addAndCheckOverflow(*colliders));
-    MLG_CHECK(addAndCheckOverflow(*rigidBodies));
-    MLG_CHECK(addAndCheckOverflow(*cameras));
-    MLG_CHECK(addAndCheckOverflow(*nodes));
+    const std::tuple<std::span<const char>,
+        std::span<const StringResource>,
+        std::span<const TextureResource>,
+        std::span<const MaterialResource>,
+        std::span<const Vertex>,
+        std::span<const VertexIndex>,
+        std::span<const MeshResource>,
+        std::span<const ModelResource>,
+        std::span<const ModelInstanceResource>,
+        std::span<const ColliderResource>,
+        std::span<const RigidBodyResource>,
+        std::span<const CameraResource>,
+        std::span<const PointLightResource>,
+        std::span<const DirectionalLightResource>,
+        std::span<const SceneNodeResource>>
+        collections(chars,
+            strings,
+            textures,
+            materials,
+            *vertices,
+            *indices,
+            *meshes,
+            models,
+            *modelInstances,
+            *colliders,
+            *rigidBodies,
+            *cameras,
+            *pointLights,
+            *directionalLights,
+            *nodes);
+
+    // Calculate total size and check for overflow
+    MLG_CHECK(std::apply([&](const auto&... collection)
+        { return (addAndCheckOverflow(collection) && ...); },
+        collections));
 
     m_Buffer.reserve(totalSize);
 
     AppendHeader(static_cast<OffsetType>(totalSize));
-    MLG_CHECK(Append(chars));
-    MLG_CHECK(Append(strings));
-    MLG_CHECK(Append(textures));
-    MLG_CHECK(Append(materials));
-    MLG_CHECK(Append(*vertices));
-    MLG_CHECK(Append(*indices));
-    MLG_CHECK(Append(*meshes));
-    MLG_CHECK(Append(models));
-    MLG_CHECK(Append(*modelInstances));
-    MLG_CHECK(Append(*colliders));
-    MLG_CHECK(Append(*rigidBodies));
-    MLG_CHECK(Append(*cameras));
-    MLG_CHECK(Append(*nodes));
+
+    // Append each collection of resources to the buffer
+    MLG_CHECK(
+        std::apply([&](const auto&... collection) { return (AppendResources(collection) && ...); },
+            collections));
 
     GetHeader()->Checksum = GetChecksum(m_Buffer);
+
+    MLG_CHECK(m_Buffer.size() == totalSize,
+        "Buffer size does not match total size: {} != {}",
+        m_Buffer.size(),
+        totalSize);
 
     return ResourceBundle(std::move(m_Buffer));
 }
@@ -1406,175 +1492,6 @@ ResourceBundleBuilder::AppendHeader(const OffsetType totalSize)
     header.TotalSize = totalSize;
 
     m_Buffer.append_range(AsBytes(header));
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const char>& chars)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->CharsOffset == kInvalidOffset, "Chars already appended");
-
-    AppendPad<char>(m_Buffer);
-    h->CharsOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->CharsLength = static_cast<IndexType>(chars.size());
-    return AppendSpan(chars, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const StringResource>& strings)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->StringsOffset == kInvalidOffset, "Strings already appended");
-
-    AppendPad<StringResource>(m_Buffer);
-    h->StringsOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->StringCount = static_cast<IndexType>(strings.size());
-    return AppendSpan(strings, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const TextureResource>& textures)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->TexturesOffset == kInvalidOffset, "Textures already appended");
-
-    AppendPad<TextureResource>(m_Buffer);
-    h->TexturesOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->TextureCount = static_cast<IndexType>(textures.size());
-    return AppendSpan(textures, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const MaterialResource>& materials)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->MaterialsOffset == kInvalidOffset, "Materials already appended");
-
-    AppendPad<MaterialResource>(m_Buffer);
-    h->MaterialsOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->MaterialCount = static_cast<IndexType>(materials.size());
-    return AppendSpan(materials, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const Vertex>& vertices)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->VerticesOffset == kInvalidOffset, "Vertices already appended");
-
-    AppendPad<Vertex>(m_Buffer);
-    h->VerticesOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->VertexCount = static_cast<IndexType>(vertices.size());
-    return AppendSpan(vertices, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const VertexIndex>& indices)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->IndicesOffset == kInvalidOffset, "Indices already appended");
-
-    AppendPad<VertexIndex>(m_Buffer);
-    h->IndicesOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->IndexCount = static_cast<IndexType>(indices.size());
-    return AppendSpan(indices, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const MeshResource>& meshes)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->MeshesOffset == kInvalidOffset, "Meshes already appended");
-
-    AppendPad<MeshResource>(m_Buffer);
-    h->MeshesOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->MeshCount = static_cast<IndexType>(meshes.size());
-    return AppendSpan(meshes, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const ModelResource>& models)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->ModelsOffset == kInvalidOffset, "Models already appended");
-
-    AppendPad<ModelResource>(m_Buffer);
-    h->ModelsOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->ModelCount = static_cast<IndexType>(models.size());
-    return AppendSpan(models, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const ModelInstanceResource>& modelInstances)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->ModelInstancesOffset == kInvalidOffset, "Model Instances already appended");
-
-    AppendPad<ModelInstanceResource>(m_Buffer);
-    h->ModelInstancesOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->ModelInstanceCount = static_cast<IndexType>(modelInstances.size());
-    return AppendSpan(modelInstances, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const ColliderResource>& colliders)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->CollidersOffset == kInvalidOffset, "Colliders already appended");
-
-    AppendPad<ColliderResource>(m_Buffer);
-    h->CollidersOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->ColliderCount = static_cast<IndexType>(colliders.size());
-    return AppendSpan(colliders, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const RigidBodyResource>& rigidBodies)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->RigidBodiesOffset == kInvalidOffset, "RigidBodies already appended");
-
-    AppendPad<RigidBodyResource>(m_Buffer);
-    h->RigidBodiesOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->RigidBodyCount = static_cast<IndexType>(rigidBodies.size());
-    return AppendSpan(rigidBodies, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const CameraResource>& cameras)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->CamerasOffset == kInvalidOffset, "Cameras already appended");
-
-    AppendPad<CameraResource>(m_Buffer);
-    h->CamerasOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->CameraCount = static_cast<IndexType>(cameras.size());
-    return AppendSpan(cameras, m_Buffer);
-}
-
-Result<>
-ResourceBundleBuilder::Append(const std::span<const SceneNodeResource>& nodes)
-{
-    Header* h = GetHeader();
-    MLG_ASSERT(h != nullptr, "Header is not initialized");
-    MLG_ASSERT(h->NodesOffset == kInvalidOffset, "Nodes already appended");
-
-    AppendPad<SceneNodeResource>(m_Buffer);
-    h->NodesOffset = static_cast<OffsetType>(m_Buffer.size());
-    h->NodeCount = static_cast<IndexType>(nodes.size());
-    return AppendSpan(nodes, m_Buffer);
 }
 
 /// ResourceBundle::LoadTask
@@ -1604,7 +1521,7 @@ ResourceBundle::LoadTask::OnStart()
     MLG_CHECK(fetchRequestId, "Failed to fetch file: {}", m_FilePath);
 
     m_FetchRequestId = *fetchRequestId;
-    
+
     return Result<>::Ok;
 }
 

@@ -163,6 +163,20 @@ struct CameraDef final
 {
 };
 
+struct DirectionalLightDef final
+{
+    Vec3f Direction{ 0, -1, 0 };
+    RgbaColorf Color{ 1, 1, 1, 1 };
+};
+
+struct PointLightDef final
+{
+    Vec3f Position{ 0 };
+    RgbaColorf Color{ 1, 1, 1, 1 };
+};
+
+using LightDef = std::variant<DirectionalLightDef, PointLightDef>;
+
 struct ChildNodeDef final
 {
     SceneDefs::NameString Name;
@@ -170,6 +184,7 @@ struct ChildNodeDef final
     std::vector<ChildNodeDef> Children;
     std::optional<ModelRef> Model;
     std::optional<CameraDef> Camera;
+    std::optional<LightDef> Light;
 };
 
 struct RootNodeDef final
@@ -180,6 +195,7 @@ struct RootNodeDef final
     std::optional<ModelRef> Model;
     std::optional<RigidBodyDef> Body;
     std::optional<CameraDef> Camera;
+    std::optional<LightDef> Light;
 };
 
 struct SceneDef final

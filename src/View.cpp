@@ -87,8 +87,8 @@ CreateMaterialProperties(const GpuHelper& gpuHelper,
     const ResourceBundle& resourceBundle,
     const std::span<const wgpu::Texture> textures)
 {
-    const std::span materialRsrcs = resourceBundle.GetMaterials();
-    const std::span textureRsrcs = resourceBundle.GetTextures();
+    const std::span materialRsrcs = resourceBundle.GetResources<MaterialResource>();
+    const std::span textureRsrcs = resourceBundle.GetResources<TextureResource>();
 
     MLG_CHECKV(textures.size() == textureRsrcs.size(), "Texture count mismatch");
 
@@ -445,12 +445,12 @@ View::CreateTask::Take()
         CreateMaterialProperties(gpuHelper, **gpuColorPassResult, *m_ResourceBundle, *textures);
     MLG_CHECK(materialProperties);
 
-    const std::span vertices = m_ResourceBundle->GetVertices();
+    const std::span vertices = m_ResourceBundle->GetResources<Vertex>();
     auto vertexBuffer = gpuHelper.CreateVertexBuffer(vertices.size(), "VertexBuffer");
     MLG_CHECK(vertexBuffer);
     vertexBuffer->Store(vertices);
 
-    const std::span indices = m_ResourceBundle->GetIndices();
+    const std::span indices = m_ResourceBundle->GetResources<VertexIndex>();
     auto indexBuffer = gpuHelper.CreateIndexBuffer(indices.size(), "IndexBuffer");
     MLG_CHECK(indexBuffer);
     indexBuffer->Store(indices);

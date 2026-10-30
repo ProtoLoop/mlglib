@@ -43,7 +43,7 @@ TextureFetcher::OnStart()
     // Set the initial stage to failed to ensure that any early exit will mark the task as failed.
     m_Stage = Stage::Failed;
 
-    const std::span<const TextureResource> texRsrcs = m_ResourceBundle->GetTextures();
+    const std::span<const TextureResource> texRsrcs = m_ResourceBundle->GetResources<TextureResource>();
     if(texRsrcs.empty())
     {
         MLG_DEBUG("No texture resources found");
