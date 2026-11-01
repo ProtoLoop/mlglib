@@ -73,7 +73,6 @@ struct DirectionalLightBuffer
 @group(0) @binding(2) var<storage, read> meshInstanceParams: array<MeshInstanceParams>;
 @group(0) @binding(3) var<storage, read> pointLights: PointLightBuffer;
 @group(0) @binding(4) var<storage, read> directionalLights: DirectionalLightBuffer;
-@group(0) @binding(5) var<uniform> camera: Camera;
 
 @group(1) @binding(0) var texture0: texture_2d<f32>;
 @group(1) @binding(1) var textureSampler: sampler;

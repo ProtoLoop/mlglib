@@ -59,10 +59,6 @@ public:
         wgpu::BufferBindingType::ReadOnlyStorage,
         wgpu::ShaderStage::Fragment>;
 
-    using CameraParamsBufferBinding = BufferBinding<GpuCameraParamsBuffer,
-        wgpu::BufferBindingType::Uniform,
-        wgpu::ShaderStage::Vertex>;
-
     using MaterialConstantsBufferBinding = BufferBinding<GpuMaterialConstantsBuffer,
         wgpu::BufferBindingType::Uniform,
         wgpu::ShaderStage::Fragment>;
@@ -71,8 +67,7 @@ public:
         ClipSpaceBufferBinding,
         MeshInstanceParamsBufferBinding,
         PointLightBufferBinding,
-        DirectionalLightBufferBinding,
-        CameraParamsBufferBinding>;
+        DirectionalLightBufferBinding>;
 
     using BindGroup1 = BindGroupHelper<TextureBinding<wgpu::ShaderStage::Fragment>,
         SamplerBinding<wgpu::ShaderStage::Fragment>,

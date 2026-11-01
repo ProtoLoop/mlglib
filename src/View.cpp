@@ -300,8 +300,7 @@ View::Render(const Dimension2d& dstExtents)
         m_ClipSpaceBuffer,
         m_MeshInstanceParamsBuffer,
         m_PointLightBuffer,
-        m_DirectionalLightBuffer,
-        m_CameraParamsBuffer);
+        m_DirectionalLightBuffer);
     MLG_CHECK(bg0Result, "Failed to create bind group 0 for color pass");
 
     MLG_CHECK(m_ColorPass->SetGeometryBuffers(m_VertexBuffer, m_IndexBuffer));
