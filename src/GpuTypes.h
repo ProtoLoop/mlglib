@@ -290,14 +290,14 @@ template<>
 constexpr size_t
 GpuSimpleBuffer<struct PointLightTag>::GetMinSize()
 {
-    return sizeof(ShaderInterop::PointLightBufferHeader);
+    return ShaderInterop::PointLightBufferHeader::CalcBufferSize(0);
 }
 
 template<>
 constexpr size_t
 GpuSimpleBuffer<struct DirectionalLightTag>::GetMinSize()
 {
-    return sizeof(ShaderInterop::DirectionalLightBufferHeader);
+    return ShaderInterop::DirectionalLightBufferHeader::CalcBufferSize(0);
 }
 
 inline bool

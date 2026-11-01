@@ -415,9 +415,7 @@ View::SyncToGpu()
         &header,
         sizeof(header));
 
-    // The header contains one element of the Lights array, so our write offset starts writing
-    // into that element.
-    bufferOffset = offsetof(ShaderInterop::DirectionalLightBufferHeader, Lights);
+    bufferOffset = sizeof(ShaderInterop::DirectionalLightBufferHeader);
 
     for(const DirectionalLightNode& directionalLight : directionalLights)
     {

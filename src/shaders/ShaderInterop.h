@@ -92,17 +92,20 @@ struct PointLightBufferHeader
 {
     std::uint32_t Count{ 0 };
     std::uint32_t padding[3]{}; // lights start at byte 16
-    PointLight Lights[1]; // array of point lights starting at byte 16
 
     /// Calculates the required GPU buffer size for the given number of lights.
-    static size_t CalcBufferSize(size_t lightCount)
+    static constexpr size_t CalcBufferSize(size_t lightCount)
     {
-        constexpr size_t sizeofHeader = sizeof(PointLightBufferHeader);
-        const size_t sizeofLights = lightCount * sizeof(PointLight);
-        const size_t sizeofBuffer = sizeofHeader + sizeofLights;
+        constexpr size_t kSizeofHeader = sizeof(PointLightBufferHeader);
+        // When there are no lights we still need a minimum sized buffer.
+        // Because of the way the light buffer is declared in the shader the
+        // min size includes space for at least one light.
+        constexpr size_t kMinSize = kSizeofHeader + sizeof(PointLight);
 
-        // Subtract the size of one light because the header already includes space for one light.
-        return lightCount > 0 ? sizeofBuffer - sizeof(PointLight) : sizeofBuffer;
+        const size_t sizeofLights = lightCount * sizeof(PointLight);
+        const size_t sizeofBuffer = kSizeofHeader + sizeofLights;
+
+        return lightCount > 0 ? sizeofBuffer : kMinSize;
     }
 };
 
@@ -122,25 +125,28 @@ struct DirectionalLightBufferHeader
 {
     std::uint32_t Count{ 0 };
     std::uint32_t padding[3]{}; // lights start at byte 16
-    DirectionalLight Lights[1]; // array of directional lights starting at byte 16
 
     /// Calculates the required GPU buffer size for the given number of lights.
-    static size_t CalcBufferSize(size_t lightCount)
+    static constexpr size_t CalcBufferSize(size_t lightCount)
     {
-        constexpr size_t sizeofHeader = sizeof(DirectionalLightBufferHeader);
-        const size_t sizeofLights = lightCount * sizeof(DirectionalLight);
-        const size_t sizeofBuffer = sizeofHeader + sizeofLights;
+        constexpr size_t kSizeofHeader = sizeof(DirectionalLightBufferHeader);
+        // When there are no lights we still need a minimum sized buffer.
+        // Because of the way the light buffer is declared in the shader the
+        // min size includes space for at least one light.
+        constexpr size_t kMinSize = kSizeofHeader + sizeof(DirectionalLight);
 
-        // Subtract the size of one light because the header already includes space for one light.
-        return lightCount > 0 ? sizeofBuffer - sizeof(DirectionalLight) : sizeofBuffer;
+        const size_t sizeofLights = lightCount * sizeof(DirectionalLight);
+        const size_t sizeofBuffer = kSizeofHeader + sizeofLights;
+
+        return lightCount > 0 ? sizeofBuffer : kMinSize;
     }
 };
 
 // NOLINTBEGIN(readability-magic-numbers)
 static_assert(sizeof(DirectionalLight) == 32);
 static_assert(sizeof(PointLight) == 32);
-static_assert(sizeof(PointLightBufferHeader) == 48);
-static_assert(sizeof(DirectionalLightBufferHeader) == 48);
+static_assert(sizeof(PointLightBufferHeader) == 16);
+static_assert(sizeof(DirectionalLightBufferHeader) == 16);
 // NOLINTEND(readability-magic-numbers)
 
 } // namespace ShaderInterop
