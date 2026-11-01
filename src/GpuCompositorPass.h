@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BindGroup.h"
 #include "CoopTask.h"
 #include "GpuTypes.h"
 #include "ShaderFetcher.h"
@@ -17,37 +18,8 @@ class GpuCompositorPass
 public:
     class CreateTask;
 
-    /// Provides the source texture and destination rectangle for the compositor pass.
-    /// The source texture will be scaled to fit the destination rectangle in the output texture.
-    struct Inputs
-    {
-        // The destination rectangle in the output texture where the input texture will be
-        // composited. The source image will be scaled to fit this rectangle.
-        Rect DstRect = Rect({ .X = -1, .Y = -1, .Width = 1, .Height = 1 });
-        wgpu::Texture Texture;
-
-        Result<> Validate() const
-        {
-            MLG_CHECKV(Texture, "Input texture is not valid");
-
-            return Result<>::Ok;
-        }
-
-        friend bool operator==(const Inputs& a, const Inputs& b) = default;
-    };
-
-    /// Provides the output texture for the compositor pass.
-    struct Outputs
-    {
-        GpuRenderTarget RenderTarget;
-
-        Result<> Validate() const // NOLINT(readability-convert-member-functions-to-static)
-        {
-            return Result<>::Ok;
-        }
-
-        friend bool operator==(const Outputs& a, const Outputs& b) = default;
-    };
+    using BindGroup0 = BindGroup<TextureBinding<wgpu::ShaderStage::Fragment>,
+        SamplerBinding<wgpu::ShaderStage::Fragment>>;
 
     GpuCompositorPass() = delete;
     ~GpuCompositorPass() = default;
@@ -56,59 +28,49 @@ public:
     GpuCompositorPass(GpuCompositorPass&&) = delete;
     GpuCompositorPass& operator=(GpuCompositorPass&&) = delete;
 
-    Result<> SetInputs(const Inputs& inputs);
-    Result<> SetOutputs(const Outputs& outputs);
+    /// Sets the source render target for the compositor pass.
+    /// The source render target will be composited onto the destination render target.
+    Result<> SetSourceRenderTarget(const GpuRenderTarget& src);
 
-    /// Executes the pass using the supplied inputs and outputs.
-    /// This variant of Execute creates a command encoder that's owned and
-    /// submitted to the GPU before returning.
-    Result<> Execute();
+    /// Executes the pass by compositing the source render target onto the destination rectangle
+    /// of the destination render target.
+    /// We do not store the destination render target internally because if it's from a swap chain,
+    /// it may change every frame.
+    /// This variant of Execute creates a command encoder that's owned and submitted to the GPU
+    /// before returning.
+    Result<> Execute(const GpuRenderTarget& dst, const Rect& dstRect);
 
-    /// Executes the pass using the supplied inputs and outputs.
+    /// Executes the pass by compositing the source render target onto the destination rectangle
+    /// of the destination render target.
+    /// We do not store the destination render target internally because if it's from a swap chain,
+    /// it may change every frame.
     /// This variant of Execute uses the provided command encoder.
     /// The caller is responsible for submitting the command encoder to the GPU.
-    Result<> Execute(const wgpu::CommandEncoder& cmdEncoder);
+    Result<> Execute(
+        const GpuRenderTarget& dst, const Rect& dstRect, const wgpu::CommandEncoder& cmdEncoder);
 
 private:
-    static constexpr const char* ShaderPath = "shaders/CompositorShader.wgsl";
-    static constexpr const char* VertexEntry = "vs_main";
-
-    /// Entry point for the fragment shader when outputting to a non-sRGB framebuffer.
-    static constexpr const char* FragmentEntry_non_srgb = "fs_main_non_srgb";
-    /// Entry point for the fragment shader when outputting to an sRGB framebuffer.
-    static constexpr const char* FragmentEntry_srgb = "fs_main_srgb";
-
-    explicit GpuCompositorPass(const GpuHelper& gpuHelper,
+    GpuCompositorPass(const GpuHelper& gpuHelper,
         wgpu::ShaderModule shader,
         wgpu::Sampler sampler,
         wgpu::BindGroupLayout bindGroupLayout,
-        wgpu::PipelineLayout pipelineLayout)
-        : m_GpuHelper(&gpuHelper),
-          m_Shader(std::move(shader)),
-          m_Sampler(std::move(sampler)),
-          m_BindGroupLayout(std::move(bindGroupLayout)),
-          m_PipelineLayout(std::move(pipelineLayout))
-    {
-        MLG_ASSERT(m_Shader, "Shader module is not valid");
-        MLG_ASSERT(m_Sampler, "Sampler is not valid");
-        MLG_ASSERT(m_BindGroupLayout, "Bind group layout is not valid");
-        MLG_ASSERT(m_PipelineLayout, "Pipeline layout is not valid");
-    }
+        wgpu::PipelineLayout pipelineLayout);
 
-    Result<> EnsurePipeline();
-    Result<> EnsureInputsBindGroup();
-    Result<wgpu::RenderPassEncoder> CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder);
+    Result<> EnsurePipeline(const wgpu::TextureFormat targetFormat);
+    Result<> EnsureBindGroup0();
+    Result<wgpu::RenderPassEncoder> CreateRenderPassEncoder(
+        const GpuRenderTarget& dst, const Rect& dstRect, const wgpu::CommandEncoder& cmdEncoder);
 
-    std::optional<Inputs> m_Inputs;
-    std::optional<Outputs> m_Outputs;
+    std::optional<GpuRenderTarget> m_SrcRenderTarget;
 
     const GpuHelper* m_GpuHelper{ nullptr };
     wgpu::ShaderModule m_Shader;
     wgpu::Sampler m_Sampler;
-    wgpu::BindGroupLayout m_BindGroupLayout;
+    wgpu::BindGroupLayout m_BindGroup0Layout;
     wgpu::PipelineLayout m_PipelineLayout;
-    wgpu::BindGroup m_InputsBindGroup;
+    wgpu::BindGroup m_BindGroup0;
     wgpu::RenderPipeline m_Pipeline;
+    wgpu::TextureFormat m_TargetFormat{ wgpu::TextureFormat::Undefined };
 };
 
 class GpuCompositorPass::CreateTask : public ICoopTask<>

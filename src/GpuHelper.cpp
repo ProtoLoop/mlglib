@@ -370,8 +370,9 @@ CreateDefaultTexture(GpuHelper& gpuHelper)
     void* p = mappedRangeResult->data();
     const std::span<uint8_t> mappedRange(static_cast<uint8_t*>(p), mappedRangeResult->size());
 
-    const size_t dstRowStride = kDefaultTextureFormat.GetBlockAlignedBytesPerRowWithPadding(kDefaultTextureWidth,
-        GpuHelper::kTextureStrideAlignment);
+    const size_t dstRowStride =
+        kDefaultTextureFormat.GetBlockAlignedBytesPerRowWithPadding(kDefaultTextureWidth,
+            GpuHelper::kTextureStrideAlignment);
 
     for(size_t y = 0; y < kDefaultTextureHeight; ++y)
     {
@@ -1025,7 +1026,8 @@ GpuHelper::CreateTextureStagingBuffer(const uint32_t width,
     MLG_CHECK(!format.IsUnknown(), "Unknown texture format: {}", format.GetName());
     MLG_CHECK(format.CheckDimensions(width, height, mipCount));
     MLG_CHECK(width % format.GetBlockDimension() == 0 && height % format.GetBlockDimension() == 0,
-        "Texture dimensions must be block aligned for format: {}", format.GetName());
+        "Texture dimensions must be block aligned for format: {}",
+        format.GetName());
 
     MLG_CHECK(HasTextureFormat(format.GetFormatId()),
         "Texture format not supported: {}",
@@ -1040,35 +1042,6 @@ GpuHelper::CreateTextureStagingBuffer(const uint32_t width,
     MLG_CHECK(buffer, "Failed to create staging buffer");
 
     return GpuTextureStagingBuffer(*this, *buffer, width, height, mipCount, format, name);
-}
-
-Result<GpuVertexBuffer>
-GpuHelper::CreateVertexBuffer(const size_t count, const std::string_view name) const
-{
-    const wgpu::BufferUsage usage = wgpu::BufferUsage::Vertex | wgpu::BufferUsage::CopyDst;
-
-    auto buffer =
-        CreateGpuBuffer(*this, usage, count * sizeof(Vertex), BufferMappedState::Unmapped, name);
-
-    MLG_CHECK(buffer, "Failed to create vertex buffer");
-
-    return GpuVertexBuffer::Create(GetDevice(), *buffer);
-}
-
-Result<GpuIndexBuffer>
-GpuHelper::CreateIndexBuffer(const size_t count, const std::string_view name) const
-{
-    const wgpu::BufferUsage usage = wgpu::BufferUsage::Index | wgpu::BufferUsage::CopyDst;
-
-    auto buffer = CreateGpuBuffer(*this,
-        usage,
-        count * sizeof(VertexIndex),
-        BufferMappedState::Unmapped,
-        name);
-
-    MLG_CHECK(buffer, "Failed to create index buffer");
-
-    return GpuIndexBuffer::Create(GetDevice(), *buffer);
 }
 
 // private:
@@ -1090,36 +1063,10 @@ GpuHelper::GpuHelper(SDL_Window* window,
 }
 
 Result<wgpu::Buffer>
-GpuHelper::CreateIndirectBuffer(const size_t size, const std::string_view name) const
+GpuHelper::CreateBuffer(
+    const size_t size, const wgpu::BufferUsage usage, const std::string_view name) const
 {
-    const wgpu::BufferUsage usage = wgpu::BufferUsage::Indirect | wgpu::BufferUsage::CopyDst;
-
-    auto buffer = CreateGpuBuffer(*this, usage, size, BufferMappedState::Unmapped, name);
-    MLG_CHECK(buffer, "Failed to create indirect buffer");
-
-    return buffer;
-}
-
-Result<wgpu::Buffer>
-GpuHelper::CreateStorageBuffer(const size_t size, const std::string_view name) const
-{
-    const wgpu::BufferUsage usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
-
-    auto buffer = CreateGpuBuffer(*this, usage, size, BufferMappedState::Unmapped, name);
-    MLG_CHECK(buffer, "Failed to create storage buffer");
-
-    return buffer;
-}
-
-Result<wgpu::Buffer>
-GpuHelper::CreateUniformBuffer(const size_t size, const std::string_view name) const
-{
-    const wgpu::BufferUsage usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
-
-    auto buffer = CreateGpuBuffer(*this, usage, size, BufferMappedState::Unmapped, name);
-    MLG_CHECK(buffer, "Failed to create uniform buffer");
-
-    return buffer;
+    return CreateGpuBuffer(*this, usage, size, BufferMappedState::Unmapped, name);
 }
 
 #ifndef __EMSCRIPTEN__

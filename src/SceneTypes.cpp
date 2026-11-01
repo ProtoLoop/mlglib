@@ -107,6 +107,38 @@ ModelNode::ModelNode(const SceneNode& node,
 {
 }
 
+/// PointLightNode
+
+PointLightNode::PointLightNode(SceneNode& sceneNode, const RgbColorf& color)
+    : m_SceneNode(&sceneNode),
+      m_Color(color)
+{
+}
+
+/// DirectionalLightNode
+
+DirectionalLightNode::DirectionalLightNode(
+    SceneNode& sceneNode, const RgbColorf& color)
+    : m_SceneNode(&sceneNode),
+      m_Color(color)
+{
+}
+
+Vec3f
+DirectionalLightNode::GetDirection() const
+{
+    const float kEpsilon = 1e-6f;
+    // The forward direction of the (+Z axis) in world space.
+    const Mat44f& wsMatrix = m_SceneNode->GetWsMatrix();
+    const Vec3f forward{ wsMatrix[2][0], wsMatrix[2][1], wsMatrix[2][2] };
+    const float length = forward.Length();
+    if(MLG_VERIFY(length > kEpsilon, "Forward vector length is too small"))
+    {
+        return forward / length;
+    }
+    return Vec3f{ 0.0f, 0.0f, 1.0f };
+}
+
 /// CameraNode
 
 CameraNode::CameraNode(SceneNode& sceneNode)
@@ -120,18 +152,20 @@ CameraNode::CreateFrustum(const float aspectRatio) const
 {
     MLG_CHECKV(aspectRatio > 0.0f, "Aspect ratio must be positive");
 
-    return std::visit([aspectRatio](auto& settings) -> Result<Frustum>
-    {
-        if constexpr (std::is_same_v<std::decay_t<decltype(settings)>, std::monostate>)
+    return std::visit(
+        [aspectRatio](auto& settings) -> Result<Frustum>
         {
-            MLG_ERROR("Projection settings not specified");
-            return Result<>::Fail;
-        }
-        else
-        {
-            auto updatedSettings = settings;
-            updatedSettings.AspectRatio = aspectRatio;
-            return Frustum::Create(updatedSettings);
-        }
-    }, m_ProjectionSettings);
+            if constexpr(std::is_same_v<std::decay_t<decltype(settings)>, std::monostate>)
+            {
+                MLG_ERROR("Projection settings not specified");
+                return Result<>::Fail;
+            }
+            else
+            {
+                auto updatedSettings = settings;
+                updatedSettings.AspectRatio = aspectRatio;
+                return Frustum::Create(updatedSettings);
+            }
+        },
+        m_ProjectionSettings);
 }

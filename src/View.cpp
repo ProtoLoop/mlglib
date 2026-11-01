@@ -7,8 +7,12 @@
 #include "PerfMetrics.h"
 #include "ResourceBundle.h"
 #include "Scene.h"
+#include "shaders/ShaderInterop.h"
 #include "System.h"
 #include "TextureFetcher.h"
+
+#include <span>
+#include <webgpu/webgpu_cpp.h>
 
 namespace
 {
@@ -53,7 +57,7 @@ BuildMeshInstanceParamsBuffer(const GpuHelper& gpuHelper,
     }
 
     auto buffer =
-        gpuHelper.CreateStorageBuffer<GpuMeshInstanceParamsBuffer>(meshInstanceParams.size(),
+        gpuHelper.CreateTypedBuffer<GpuMeshInstanceParamsBuffer>(meshInstanceParams.size(),
             "MeshInstanceParamsBuffer");
     MLG_CHECK(buffer);
 
@@ -63,8 +67,8 @@ BuildMeshInstanceParamsBuffer(const GpuHelper& gpuHelper,
 }
 
 /// Creates the render target that will be used as the output for GpuColorPass.
-Result<GpuColorPass::Outputs>
-CreateColorPassTarget(const GpuHelper& gpuHelper, const uint32_t width, const uint32_t height)
+Result<GpuColorPass::RenderAttachments>
+CreateColorPassAttachments(const GpuHelper& gpuHelper, const uint32_t width, const uint32_t height)
 {
     MLG_DEBUG("Creating new color/depth target with size {}x{}", width, height);
 
@@ -74,7 +78,7 @@ CreateColorPassTarget(const GpuHelper& gpuHelper, const uint32_t width, const ui
     auto depthBuffer = gpuHelper.CreateDepthBuffer(width, height, "ColorPass::DepthBuffer");
     MLG_CHECK(depthBuffer, "Failed to create color depth buffer");
 
-    return GpuColorPass::Outputs //
+    return GpuColorPass::RenderAttachments //
         {
             .RenderTarget = *renderTarget,
             .DepthBuffer = *depthBuffer,
@@ -87,6 +91,8 @@ CreateMaterialProperties(const GpuHelper& gpuHelper,
     const ResourceBundle& resourceBundle,
     const std::span<const wgpu::Texture> textures)
 {
+    MLG_INFO("Collecting materials...");
+
     const std::span materialRsrcs = resourceBundle.GetResources<MaterialResource>();
     const std::span textureRsrcs = resourceBundle.GetResources<TextureResource>();
 
@@ -126,10 +132,10 @@ CreateMaterialProperties(const GpuHelper& gpuHelper,
             };
 
         auto buffer =
-            gpuHelper.CreateUniformBuffer<GpuMaterialConstantsBuffer>(1, "MaterialConstants");
+            gpuHelper.CreateTypedBuffer<GpuMaterialConstantsBuffer>(1, "MaterialConstants");
         MLG_CHECK(buffer);
 
-        buffer->Store(0, mc);
+        buffer->Store(std::span(&mc, 1));
 
         auto bindGroup = gpuColorPass.CreateMaterialBindGroup(baseTexture, *buffer, bindGroupName);
         MLG_CHECK(bindGroup);
@@ -137,7 +143,47 @@ CreateMaterialProperties(const GpuHelper& gpuHelper,
         materialProperties.emplace_back(mtlRsrc.AlphaMode, std::move(*bindGroup));
     }
 
+    MLG_INFO("Collected materials: {}", materialProperties.size());
+
     return materialProperties;
+}
+
+Result<GpuPointLightBuffer>
+CreatePointLightBuffer(const GpuHelper& gpuHelper,
+    const std::span<const PointLightNode> pointLights)
+{
+    const size_t bufferSize =
+        ShaderInterop::PointLightBufferHeader::CalcBufferSize(pointLights.size());
+
+    const wgpu::BufferDescriptor desc //
+        {
+            .usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+            .size = bufferSize,
+        };
+
+    const wgpu::Buffer buffer = gpuHelper.GetDevice().CreateBuffer(&desc);
+    MLG_CHECK(buffer, "Failed to create point light buffer");
+
+    return GpuPointLightBuffer::Create(buffer);
+}
+
+Result<GpuDirectionalLightBuffer>
+CreateDirectionalLightBuffer(const GpuHelper& gpuHelper,
+    const std::span<const DirectionalLightNode> directionalLights)
+{
+    const size_t bufferSize =
+        ShaderInterop::DirectionalLightBufferHeader::CalcBufferSize(directionalLights.size());
+
+    const wgpu::BufferDescriptor desc //
+        {
+            .usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
+            .size = bufferSize,
+        };
+
+    const wgpu::Buffer buffer = gpuHelper.GetDevice().CreateBuffer(&desc);
+    MLG_CHECK(buffer, "Failed to create directional light buffer");
+
+    return GpuDirectionalLightBuffer::Create(buffer);
 }
 
 /// Returns the world-space transform of the given camera node.
@@ -172,8 +218,10 @@ View::View(const GpuHelper& gpuHelper,
     GpuVertexBuffer&& vertexBuffer,
     GpuIndexBuffer&& indexBuffer,
     GpuWorldTransformBuffer&& worldTransformBuffer,
-    GpuClipSpaceBuffer&& clipSpaceBuffer,
+    GpuClipSpaceTransformBuffer&& clipSpaceBuffer,
     GpuMeshInstanceParamsBuffer&& meshInstanceParamsBuffer,
+    GpuPointLightBuffer&& pointLightBuffer,
+    GpuDirectionalLightBuffer&& directionalLightBuffer,
     GpuCameraParamsBuffer&& cameraParamsBuffer,
     std::vector<GpuMaterialProperties>&& materialProperties)
     : m_GpuHelper(&gpuHelper),
@@ -186,6 +234,8 @@ View::View(const GpuHelper& gpuHelper,
       m_WorldTransformBuffer(std::move(worldTransformBuffer)),
       m_ClipSpaceBuffer(std::move(clipSpaceBuffer)),
       m_MeshInstanceParamsBuffer(std::move(meshInstanceParamsBuffer)),
+      m_PointLightBuffer(std::move(pointLightBuffer)),
+      m_DirectionalLightBuffer(std::move(directionalLightBuffer)),
       m_CameraParamsBuffer(std::move(cameraParamsBuffer)),
       m_MaterialProperties(std::move(materialProperties)),
       m_TotalMeshInstanceCount(CountMeshInstances(scene.GetAllModelNodes()))
@@ -234,33 +284,33 @@ View::Render(const Dimension2d& dstExtents)
 
     MLG_CHECK(TransformNodes(gpuDevice, cmdEncoder, cameraWsXForm, frustum));
 
-    if(!m_ColorPassOutputs
-        || m_ColorPassOutputs->RenderTarget->GetWidth() != dstExtents.GetWidth()
-        || m_ColorPassOutputs->RenderTarget->GetHeight() != dstExtents.GetHeight())
+    if(!m_RenderAttachments
+        || m_RenderAttachments->RenderTarget->GetWidth() != dstExtents.GetWidth()
+        || m_RenderAttachments->RenderTarget->GetHeight() != dstExtents.GetHeight())
     {
-        auto colorPassOutputs =
-            CreateColorPassTarget(*m_GpuHelper, dstExtents.GetWidth(), dstExtents.GetHeight());
-        MLG_CHECK(colorPassOutputs);
+        auto colorPassAttachments =
+            CreateColorPassAttachments(*m_GpuHelper, dstExtents.GetWidth(), dstExtents.GetHeight());
+        MLG_CHECK(colorPassAttachments);
 
-        m_ColorPassOutputs = std::move(*colorPassOutputs);
+        m_RenderAttachments = std::move(*colorPassAttachments);
     }
 
-    const GpuColorPass::Inputs colorPassInputs //
-        {
-            .Vertices = m_VertexBuffer,
-            .Indices = m_IndexBuffer,
-            .WorldTransforms = m_WorldTransformBuffer,
-            .ClipSpaceTransforms = m_ClipSpaceBuffer,
-            .MeshInstanceParams = m_MeshInstanceParamsBuffer,
-            .CameraParams = m_CameraParamsBuffer,
-        };
+    const auto bg0Result = GpuColorPass::BindGroup0::Create(
+        m_WorldTransformBuffer,
+        m_ClipSpaceBuffer,
+        m_MeshInstanceParamsBuffer,
+        m_PointLightBuffer,
+        m_DirectionalLightBuffer,
+        m_CameraParamsBuffer);
+    MLG_CHECK(bg0Result, "Failed to create bind group 0 for color pass");
 
-    MLG_CHECK(m_ColorPass->SetInputs(colorPassInputs));
-    MLG_CHECK(m_ColorPass->SetOutputs(*m_ColorPassOutputs));
+    MLG_CHECK(m_ColorPass->SetGeometryBuffers(m_VertexBuffer, m_IndexBuffer));
+    MLG_CHECK(m_ColorPass->SetBindGroup(*bg0Result));
+    MLG_CHECK(m_ColorPass->SetRenderAttachments(*m_RenderAttachments));
 
     CullMeshes(cameraWsXForm, frustum);
 
-    MLG_CHECK(m_ColorPass->Execute(cmdEncoder, m_CulledMeshes, m_MaterialProperties));
+    MLG_CHECK(m_ColorPass->Execute(m_CulledMeshes, m_MaterialProperties, cmdEncoder));
 
     const wgpu::CommandBuffer cmdBuf = cmdEncoder.Finish(nullptr);
     MLG_CHECK(cmdBuf, "Failed to finish command buffer");
@@ -285,23 +335,11 @@ View::Composite(const GpuRenderTarget& target)
 Result<>
 View::Composite(const GpuRenderTarget& target, const Rect& dstRect)
 {
-    MLG_CHECKV(m_ColorPassOutputs, "Color pass outputs are not valid");
+    MLG_CHECKV(m_RenderAttachments, "Color pass attachments are not valid");
 
-    const GpuCompositorPass::Inputs inputs //
-        {
-            .DstRect = dstRect,
-            .Texture = m_ColorPassOutputs->RenderTarget.Get(),
-        };
+    MLG_CHECK(m_CompositorPass->SetSourceRenderTarget(m_RenderAttachments->RenderTarget));
 
-    const GpuCompositorPass::Outputs outputs //
-        {
-            .RenderTarget = target,
-        };
-
-    MLG_CHECK(m_CompositorPass->SetInputs(inputs));
-    MLG_CHECK(m_CompositorPass->SetOutputs(outputs));
-
-    return m_CompositorPass->Execute();
+    return m_CompositorPass->Execute(target, dstRect);
 }
 
 // private:
@@ -350,17 +388,51 @@ View::CullMeshes(const TrTransformf& wsCameraXForm, const Frustum& frustum)
 Result<>
 View::SyncToGpu()
 {
+    const wgpu::Device& gpuDevice = m_GpuHelper->GetDevice();
+
     // Brute force copy everything for now.
     uint64_t bufferOffset = 0;
     for(const ModelNode& modelNode : m_Scene->GetAllModelNodes())
     {
         const ShaderInterop::WorldTransform transform{ .Transform = modelNode.GetWsMatrix() };
-        m_GpuHelper->GetDevice().GetQueue().WriteBuffer(m_WorldTransformBuffer.GetGpuBuffer(),
+        gpuDevice.GetQueue().WriteBuffer(m_WorldTransformBuffer.GetBuffer(),
             bufferOffset,
             &transform,
             sizeof(transform));
 
         bufferOffset += sizeof(transform);
+    }
+
+    const std::span directionalLights = m_Scene->GetAllDirectionalLights();
+
+    const ShaderInterop::DirectionalLightBufferHeader header //
+        {
+            .Count = static_cast<std::uint32_t>(directionalLights.size()),
+        };
+
+    gpuDevice.GetQueue().WriteBuffer(m_DirectionalLightBuffer.GetBuffer(),
+        0,
+        &header,
+        sizeof(header));
+
+    // The header contains one element of the Lights array, so our write offset starts writing
+    // into that element.
+    bufferOffset = offsetof(ShaderInterop::DirectionalLightBufferHeader, Lights);
+
+    for(const DirectionalLightNode& directionalLight : directionalLights)
+    {
+        const ShaderInterop::DirectionalLight shaderLight //
+            {
+                .Direction = directionalLight.GetDirection(),
+                .Color = directionalLight.GetColor(),
+            };
+
+        gpuDevice.GetQueue().WriteBuffer(m_DirectionalLightBuffer.GetBuffer(),
+            bufferOffset,
+            &shaderLight,
+            sizeof(shaderLight));
+
+        bufferOffset += sizeof(shaderLight);
     }
 
     return Result<>::Ok;
@@ -381,24 +453,18 @@ View::TransformNodes(const wgpu::Device& gpuDevice,
             .ViewProj = proj * view,
         };
 
-    gpuDevice.GetQueue().WriteBuffer(m_CameraParamsBuffer.GetGpuBuffer(),
+    gpuDevice.GetQueue().WriteBuffer(m_CameraParamsBuffer.GetBuffer(),
         0,
         &cameraParams,
         sizeof(ShaderInterop::CameraParams));
 
-    const GpuTransformPass::Inputs inputs //
-        {
-            .WorldTransforms = m_WorldTransformBuffer,
-            .CameraParams = m_CameraParamsBuffer,
-        };
+    const auto bg0Result = GpuTransformPass::BindGroup0::Create(
+        m_WorldTransformBuffer,
+        m_ClipSpaceBuffer,
+        m_CameraParamsBuffer);
+    MLG_CHECK(bg0Result, "Failed to create bind group 0 for transform pass");
 
-    const GpuTransformPass::Outputs outputs //
-        {
-            .ClipSpaceTransforms = m_ClipSpaceBuffer,
-        };
-
-    MLG_CHECK(m_TransformPass->SetInputs(inputs));
-    MLG_CHECK(m_TransformPass->SetOutputs(outputs));
+    MLG_CHECK(m_TransformPass->SetBindGroup(*bg0Result));
 
     return m_TransformPass->Execute(cmdEncoder);
 }
@@ -445,30 +511,42 @@ View::CreateTask::Take()
         CreateMaterialProperties(gpuHelper, **gpuColorPassResult, *m_ResourceBundle, *textures);
     MLG_CHECK(materialProperties);
 
+    MLG_INFO("Collecting vertices...");
     const std::span vertices = m_ResourceBundle->GetResources<Vertex>();
-    auto vertexBuffer = gpuHelper.CreateVertexBuffer(vertices.size(), "VertexBuffer");
+    auto vertexBuffer = gpuHelper.CreateTypedBuffer<GpuVertexBuffer>(vertices.size(), "VertexBuffer");
     MLG_CHECK(vertexBuffer);
     vertexBuffer->Store(vertices);
+    MLG_INFO("Collected vertices: {}", vertices.size());
 
+    MLG_INFO("Collecting indices...");
     const std::span indices = m_ResourceBundle->GetResources<VertexIndex>();
-    auto indexBuffer = gpuHelper.CreateIndexBuffer(indices.size(), "IndexBuffer");
+    auto indexBuffer = gpuHelper.CreateTypedBuffer<GpuIndexBuffer>(indices.size(), "IndexBuffer");
     MLG_CHECK(indexBuffer);
     indexBuffer->Store(indices);
+    MLG_INFO("Collected indices: {}", indices.size());
 
     const std::span modelNodes = m_Scene->GetAllModelNodes();
 
-    auto transformBuffer = gpuHelper.CreateStorageBuffer<GpuWorldTransformBuffer>(modelNodes.size(),
+    auto transformBuffer = gpuHelper.CreateTypedBuffer<GpuWorldTransformBuffer>(modelNodes.size(),
         "WorldTransforms");
     MLG_CHECK(transformBuffer);
 
     auto clipSpaceBuffer =
-        gpuHelper.CreateStorageBuffer<GpuClipSpaceBuffer>(modelNodes.size(), "ClipSpaceTransforms");
+        gpuHelper.CreateTypedBuffer<GpuClipSpaceTransformBuffer>(modelNodes.size(), "ClipSpaceTransforms");
     MLG_CHECK(clipSpaceBuffer);
 
     auto meshInstanceParamsBuffer = BuildMeshInstanceParamsBuffer(gpuHelper, modelNodes);
     MLG_CHECK(meshInstanceParamsBuffer);
 
-    auto cameraParamsBuf = gpuHelper.CreateUniformBuffer<GpuCameraParamsBuffer>(1, "CameraParams");
+    const std::span pointLights = m_Scene->GetAllPointLights();
+    auto pointLightBuffer = CreatePointLightBuffer(gpuHelper, pointLights);
+    MLG_CHECK(pointLightBuffer);
+
+    const std::span directionalLights = m_Scene->GetAllDirectionalLights();
+    auto directionalLightBuffer = CreateDirectionalLightBuffer(gpuHelper, directionalLights);
+    MLG_CHECK(directionalLightBuffer);
+
+    auto cameraParamsBuf = gpuHelper.CreateTypedBuffer<GpuCameraParamsBuffer>(1, "CameraParams");
     MLG_CHECK(cameraParamsBuf);
 
     std::unique_ptr<View> view(new View(gpuHelper,
@@ -481,6 +559,8 @@ View::CreateTask::Take()
         std::move(*transformBuffer),
         std::move(*clipSpaceBuffer),
         std::move(*meshInstanceParamsBuffer),
+        std::move(*pointLightBuffer),
+        std::move(*directionalLightBuffer),
         std::move(*cameraParamsBuf),
         std::move(*materialProperties)));
 

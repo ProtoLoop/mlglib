@@ -55,8 +55,10 @@ private:
         GpuVertexBuffer&& vertexBuffer,
         GpuIndexBuffer&& indexBuffer,
         GpuWorldTransformBuffer&& worldTransformBuffer,
-        GpuClipSpaceBuffer&& clipSpaceBuffer,
+        GpuClipSpaceTransformBuffer&& clipSpaceBuffer,
         GpuMeshInstanceParamsBuffer&& meshInstanceParamsBuffer,
+        GpuPointLightBuffer&& pointLightBuffer,
+        GpuDirectionalLightBuffer&& directionalLightBuffer,
         GpuCameraParamsBuffer&& cameraParamsBuffer,
         std::vector<GpuMaterialProperties>&& materialProperties);
 
@@ -76,7 +78,7 @@ private:
 
     const Scene* m_Scene{ nullptr };
 
-    std::optional<GpuColorPass::Outputs> m_ColorPassOutputs;
+    std::optional<GpuColorPass::RenderAttachments> m_RenderAttachments;
     std::unique_ptr<GpuColorPass> m_ColorPass;
     std::unique_ptr<GpuCompositorPass> m_CompositorPass;
     std::unique_ptr<GpuTransformPass> m_TransformPass;
@@ -84,8 +86,10 @@ private:
     GpuVertexBuffer m_VertexBuffer;
     GpuIndexBuffer m_IndexBuffer;
     GpuWorldTransformBuffer m_WorldTransformBuffer;
-    GpuClipSpaceBuffer m_ClipSpaceBuffer;
+    GpuClipSpaceTransformBuffer m_ClipSpaceBuffer;
     GpuMeshInstanceParamsBuffer m_MeshInstanceParamsBuffer;
+    GpuPointLightBuffer m_PointLightBuffer;
+    GpuDirectionalLightBuffer m_DirectionalLightBuffer;
     GpuCameraParamsBuffer m_CameraParamsBuffer;
 
     std::vector<GpuMaterialProperties> m_MaterialProperties;

@@ -62,54 +62,15 @@ public:
         const TextureFormat& format,
         const std::string_view name) const;
 
-    /// Creates a vertex buffer with capacity for the given number of vertices.
-    Result<GpuVertexBuffer> CreateVertexBuffer(const size_t count,
-        const std::string_view name) const;
-
-    /// Creates an index buffer with capacity for the given number of indices.
-    Result<GpuIndexBuffer> CreateIndexBuffer(const size_t count,
-        const std::string_view name) const;
-
-    /// Creates a semantically-typed storage buffer.
-    template<typename T>
-    Result<T> CreateStorageBuffer(const size_t count, const std::string_view name) const
+    /// Creates a strongly typed GPU buffer.
+    /// The buffer will have capacity for the given number of elements of type T.
+    template<typename BufferType>
+    Result<BufferType> CreateTypedBuffer(const size_t count, const std::string_view name) const
     {
-        static_assert(is_gpu_storage_buffer_type_v<T>,
-            "T must be a GpuBuffer type with GpuBufferUsage::Storage");
-
-        const size_t bufferSize = count * sizeof(typename T::value_type);
-        auto bufferResult = CreateStorageBuffer(bufferSize, name);
-        MLG_CHECK(bufferResult);
-
-        return T::Create(GetDevice(), *bufferResult);
-    }
-
-    /// Creates a semantically-typed uniform buffer.
-    template<typename T>
-    Result<T> CreateUniformBuffer(const size_t count, const std::string_view name) const
-    {
-        static_assert(is_gpu_uniform_buffer_type_v<T>,
-            "T must be a GpuBuffer type with GpuBufferUsage::Uniform");
-
-        const size_t bufferSize = count * sizeof(typename T::value_type);
-        auto bufferResult = CreateUniformBuffer(bufferSize, name);
-        MLG_CHECK(bufferResult);
-
-        return T::Create(GetDevice(), *bufferResult);
-    }
-
-    /// Creates a semantically-typed indirect buffer.
-    template<typename T>
-    Result<T> CreateIndirectBuffer(const size_t count, const std::string_view name) const
-    {
-        static_assert(is_gpu_indirect_buffer_type_v<T>,
-            "T must be a GpuBuffer type with GpuBufferUsage::Indirect");
-
-        const size_t bufferSize = count * sizeof(typename T::value_type);
-        auto bufferResult = CreateIndirectBuffer(bufferSize, name);
-        MLG_CHECK(bufferResult);
-
-        return T::Create(GetDevice(), *bufferResult);
+        const size_t bufferSize = count * sizeof(typename BufferType::value_type);
+        auto bufferResult = CreateBuffer(bufferSize, BufferType::usage, name);
+        MLG_CHECK(bufferResult, "Failed to create GPU buffer");
+        return BufferType::Create(GetDevice(), *bufferResult);
     }
 
 private:
@@ -121,9 +82,8 @@ private:
         wgpu::Surface surface,
         wgpu::TextureFormat surfaceFormat);
 
-    Result<wgpu::Buffer> CreateIndirectBuffer(const size_t size, const std::string_view name) const;
-    Result<wgpu::Buffer> CreateStorageBuffer(const size_t size, const std::string_view name) const;
-    Result<wgpu::Buffer> CreateUniformBuffer(const size_t size, const std::string_view name) const;
+    Result<wgpu::Buffer> CreateBuffer(
+        const size_t size, const wgpu::BufferUsage usage, const std::string_view name) const;
 
     SDL_Window* m_Window{ nullptr };
     SDL_MetalView m_MetalView{ nullptr };

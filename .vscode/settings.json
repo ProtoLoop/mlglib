@@ -48,6 +48,11 @@
             }
         ]
     },
+    "[wgsl]": {
+        "editor.formatOnSave": false,
+        "editor.formatOnType": false,
+        "editor.formatOnPaste": false
+    },
     "cmake.configureOnOpen": false,
     "cmake.configureSettings": {
         "ENABLE_CLANG_TIDY": "ON"

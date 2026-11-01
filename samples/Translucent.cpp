@@ -89,6 +89,13 @@ CreateScene()
                     .Transform{},
                     .Model = ModelRef{ .Name{ "Model" } },
                 },
+                { .Name{ "Node3" },
+                    .Transform{},
+                    .Light =
+                        DirectionalLightDef //
+                    {
+                        .Color{ "#006aff"_rgb },
+                    } },
             } };
 
     return sceneDef;

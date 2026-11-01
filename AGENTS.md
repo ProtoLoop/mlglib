@@ -20,6 +20,11 @@ Before analyzing a concrete task:
 3. Inspect the relevant implementation, nearby code, and call sites.
 4. Compare analogous systems before recommending a new idiom or exception.
 
+Before performing a code review or re-review, read
+[Code Review Guidelines](docs/code-review.md). If you have already read the
+current version during this session, you do not need to read it again. Follow
+these guidelines for both the review and its presentation.
+
 Treat the repository and its architecture documentation as authoritative rather
 than relying on assumptions from previous conversations. Flag genuine conflicts
 and stale documentation instead of silently choosing a direction.

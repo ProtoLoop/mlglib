@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BindGroup.h"
 #include "CoopTask.h"
 #include "GpuTypes.h"
 #include "Result.h"
@@ -16,30 +17,20 @@ class GpuTransformPass
 public:
     class CreateTask;
 
-    struct Inputs
-    {
-        GpuWorldTransformBuffer WorldTransforms;
-        GpuCameraParamsBuffer CameraParams;
+    using WorldTransformBufferBinding = BufferBinding<GpuWorldTransformBuffer,
+        wgpu::BufferBindingType::ReadOnlyStorage,
+        wgpu::ShaderStage::Compute>;
 
-        Result<> Validate() const // NOLINT(readability-convert-member-functions-to-static)
-        {
-            return Result<>::Ok;
-        }
+    using ClipSpaceBufferBinding = BufferBinding<GpuClipSpaceTransformBuffer,
+        wgpu::BufferBindingType::Storage,
+        wgpu::ShaderStage::Compute>;
 
-        friend bool operator==(const Inputs& a, const Inputs& b) = default;
-    };
+    using CameraParamsBufferBinding = BufferBinding<GpuCameraParamsBuffer,
+        wgpu::BufferBindingType::Uniform,
+        wgpu::ShaderStage::Compute>;
 
-    struct Outputs
-    {
-        GpuClipSpaceBuffer ClipSpaceTransforms;
-
-        Result<> Validate() const // NOLINT(readability-convert-member-functions-to-static)
-        {
-            return Result<>::Ok;
-        }
-
-        friend bool operator==(const Outputs& a, const Outputs& b) = default;
-    };
+    using BindGroup0 =
+        BindGroup<WorldTransformBufferBinding, ClipSpaceBufferBinding, CameraParamsBufferBinding>;
 
     GpuTransformPass() = delete;
     ~GpuTransformPass() = default;
@@ -48,52 +39,33 @@ public:
     GpuTransformPass(GpuTransformPass&&) = delete;
     GpuTransformPass& operator=(GpuTransformPass&&) = delete;
 
-    Result<> SetInputs(const Inputs& inputs);
-    Result<> SetOutputs(const Outputs& outputs);
+    Result<> SetBindGroup(const BindGroup0& bg0);
 
-    /// Executes the pass using the supplied inputs and outputs.
+    /// Executes the pass by performing the transform computation.
     /// This variant of Execute creates a command encoder that's owned and
     /// submitted to the GPU before returning.
     Result<> Execute();
 
-    /// Executes the pass using the supplied inputs and outputs.
+    /// Executes the pass by performing the transform computation.
     /// This variant of Execute uses the provided command encoder.
     /// The caller is responsible for submitting the command encoder to the GPU.
-    Result<> Execute(wgpu::CommandEncoder cmdEncoder);
+    Result<> Execute(const wgpu::CommandEncoder& cmdEncoder);
 
 private:
-    static constexpr const char* ShaderPath = "shaders/TransformShader.wgsl";
-    static constexpr const char* ComputeEntry = "cs_main";
-    static constexpr const char* kWorkgroupSizeOverride = "WorkgroupSizeOverride";
-    static constexpr size_t kWorkgroupSize = 64;
-
-    explicit GpuTransformPass(const GpuHelper& gpuHelper,
-        wgpu::ShaderModule shader,
+    GpuTransformPass(const GpuHelper& gpuHelper,
         wgpu::BindGroupLayout bindGroupLayout,
-        wgpu::PipelineLayout pipelineLayout)
-        : m_GpuHelper(&gpuHelper),
-          m_Shader(std::move(shader)),
-          m_BindGroupLayout(std::move(bindGroupLayout)),
-          m_PipelineLayout(std::move(pipelineLayout))
-    {
-        MLG_ASSERT(m_Shader, "Shader module is not valid");
-        MLG_ASSERT(m_BindGroupLayout, "Bind group layout is not valid");
-        MLG_ASSERT(m_PipelineLayout, "Pipeline layout is not valid");
-    }
+        wgpu::ComputePipeline pipeline);
 
-    Result<> EnsurePipeline();
-    Result<> EnsureInputOutputBindGroup();
-    Result<wgpu::ComputePassEncoder> CreateComputePassEncoder(const wgpu::CommandEncoder& cmdEncoder);
+    Result<> EnsureBindGroup0();
+    Result<wgpu::ComputePassEncoder> CreateComputePassEncoder(
+        const wgpu::CommandEncoder& cmdEncoder);
 
     const GpuHelper* m_GpuHelper;
 
-    std::optional<Inputs> m_Inputs;
-    std::optional<Outputs> m_Outputs;
+    std::optional<BindGroup0> m_BindGroup0Params;
 
-    wgpu::ShaderModule m_Shader;
-    wgpu::BindGroupLayout m_BindGroupLayout;
-    wgpu::PipelineLayout m_PipelineLayout;
-    wgpu::BindGroup m_InputOutputBindGroup;
+    wgpu::BindGroupLayout m_BindGroup0Layout;
+    wgpu::BindGroup m_BindGroup0;
     wgpu::ComputePipeline m_Pipeline;
 };
 

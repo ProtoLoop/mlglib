@@ -1,59 +1,19 @@
 #define MLG_LOGGER_NAME "CMPP"
 
 #include "GpuCompositorPass.h"
+
 #include "GpuHelper.h"
 #include "PerfMetrics.h"
 
 namespace
 {
-constexpr wgpu::BindGroupLayoutEntry InputBindGroupLayoutEntries[]//
-{
-    // Texture
-    wgpu::BindGroupLayoutEntry//
-    {
-        .binding = 0,
-        .visibility = wgpu::ShaderStage::Fragment,
-        .texture =
-        {
-            .sampleType = wgpu::TextureSampleType::Float,
-            .viewDimension = wgpu::TextureViewDimension::e2D,
-            .multisampled = false,
-        },
-    },
-    // Sampler
-    wgpu::BindGroupLayoutEntry//
-    {
-        .binding = 1,
-        .visibility = wgpu::ShaderStage::Fragment,
-        .sampler =
-        {
-            .type = wgpu::SamplerBindingType::Filtering,
-        },
-    },
-};
+constexpr const char* ShaderPath = "shaders/CompositorShader.wgsl";
+constexpr const char* VertexEntry = "vs_main";
 
-auto
-CreateInputBindGroupEntries(const GpuCompositorPass::Inputs& inputs, const wgpu::Sampler& sampler)
-{
-    const std::array entries //
-        {
-            wgpu::BindGroupEntry //
-            {
-                .binding = 0,
-                .textureView = inputs.Texture.CreateView(),
-            },
-            wgpu::BindGroupEntry //
-            {
-                .binding = 1,
-                .sampler = sampler,
-            },
-        };
-
-    static_assert(std::size(entries) == std::size(InputBindGroupLayoutEntries),
-        "Bind group layout entries and bind group entries must have the same size");
-
-    return entries;
-}
+/// Entry point for the fragment shader when outputting to a non-sRGB framebuffer.
+constexpr const char* FragmentEntry_non_srgb = "fs_main_non_srgb";
+/// Entry point for the fragment shader when outputting to an sRGB framebuffer.
+constexpr const char* FragmentEntry_srgb = "fs_main_srgb";
 
 Result<wgpu::Sampler>
 CreateSampler(const GpuHelper& gpuHelper)
@@ -82,11 +42,13 @@ CreateSampler(const GpuHelper& gpuHelper)
 Result<wgpu::BindGroupLayout>
 CreateBindGroupLayout(const GpuHelper& gpuHelper)
 {
-    static constexpr wgpu::BindGroupLayoutDescriptor desc //
+    const auto entries = GpuCompositorPass::BindGroup0::LayoutEntries;
+
+    const wgpu::BindGroupLayoutDescriptor desc //
         {
             .label = "GpuCompositorPass",
-            .entryCount = std::size(InputBindGroupLayoutEntries),
-            .entries = &InputBindGroupLayoutEntries[0],
+            .entryCount = std::size(entries),
+            .entries = entries.data(),
         };
 
     const wgpu::BindGroupLayout bindGroupLayout =
@@ -97,7 +59,7 @@ CreateBindGroupLayout(const GpuHelper& gpuHelper)
 }
 
 Result<wgpu::PipelineLayout>
-CreatePipelineLayout(const GpuHelper& gpuHelper, const wgpu::BindGroupLayout& bindGroupLayout)
+CreatePipelineLayout(const wgpu::Device& gpuDevice, const wgpu::BindGroupLayout& bindGroupLayout)
 {
     MLG_CHECKV(bindGroupLayout, "Bind group layout is not valid");
 
@@ -108,10 +70,93 @@ CreatePipelineLayout(const GpuHelper& gpuHelper, const wgpu::BindGroupLayout& bi
             .bindGroupLayouts = &bindGroupLayout,
         };
 
-    const wgpu::PipelineLayout pipelineLayout =
-        gpuHelper.GetDevice().CreatePipelineLayout(&pipelineLayoutDesc);
+    const wgpu::PipelineLayout pipelineLayout = gpuDevice.CreatePipelineLayout(&pipelineLayoutDesc);
     MLG_CHECK(pipelineLayout, "Failed to create pipeline layout");
     return pipelineLayout;
+}
+
+Result<wgpu::RenderPipeline>
+CreatePipeline(const wgpu::Device& gpuDevice,
+    const wgpu::PipelineLayout& pipelineLayout,
+    const wgpu::ShaderModule& shader,
+    const wgpu::TextureFormat targetFormat)
+{
+    static constexpr wgpu::BlendState blendState //
+    {
+        .color =
+        {
+            .operation = wgpu::BlendOperation::Add,
+            .srcFactor = wgpu::BlendFactor::One,
+            .dstFactor = wgpu::BlendFactor::Zero,
+        },
+        .alpha =
+        {
+            .operation = wgpu::BlendOperation::Add,
+            .srcFactor = wgpu::BlendFactor::One,
+            .dstFactor = wgpu::BlendFactor::Zero,
+        },
+    };
+
+    const wgpu::ColorTargetState colorTargetState //
+        {
+            .format = targetFormat,
+            .blend = &blendState,
+            .writeMask = wgpu::ColorWriteMask::All,
+        };
+
+    const char* fragmentEntry = nullptr;
+
+    if(wgpu::TextureFormat::RGBA8UnormSrgb == targetFormat
+        || wgpu::TextureFormat::BGRA8UnormSrgb == targetFormat)
+    {
+        fragmentEntry = FragmentEntry_srgb;
+    }
+    else
+    {
+        fragmentEntry = FragmentEntry_non_srgb;
+    }
+
+    const wgpu::FragmentState fragmentState //
+        {
+            .module = shader,
+            .entryPoint = fragmentEntry,
+            .targetCount = 1,
+            .targets = &colorTargetState,
+        };
+
+    const wgpu::RenderPipelineDescriptor desc//
+    {
+        .label = "GpuCompositorPass",
+        .layout = pipelineLayout,
+        .vertex =
+        {
+            .module = shader,
+            .entryPoint = VertexEntry,
+            .bufferCount = 0,
+            .buffers = nullptr,
+        },
+        .primitive =
+        {
+            .topology = wgpu::PrimitiveTopology::TriangleList,
+            .stripIndexFormat = wgpu::IndexFormat::Undefined,
+            .frontFace = wgpu::FrontFace::CW,
+            .cullMode = wgpu::CullMode::Back,
+            .unclippedDepth = false,
+        },
+        .depthStencil = nullptr, // No depth/stencil for this pipeline
+        .multisample =
+        {
+            .count = 1,
+            .mask = 0xFFFFFFFF,
+            .alphaToCoverageEnabled = false,
+        },
+        .fragment = &fragmentState,
+    };
+
+    wgpu::RenderPipeline pipeline = gpuDevice.CreateRenderPipeline(&desc);
+    MLG_CHECK(pipeline, "Failed to create pipeline");
+
+    return pipeline;
 }
 } // namespace
 
@@ -130,7 +175,7 @@ GpuCompositorPass::CreateTask::Take()
     MLG_CHECKV(!m_Consumed, "Task result already consumed");
 
     m_Consumed = true;
-    
+
     auto shader = m_ShaderFetcher.Take();
     MLG_CHECK(shader, "Failed to fetch shader: {}", ShaderPath);
 
@@ -140,7 +185,7 @@ GpuCompositorPass::CreateTask::Take()
     auto bindGroupLayout = CreateBindGroupLayout(*m_GpuHelper);
     MLG_CHECK(bindGroupLayout);
 
-    auto pipelineLayout = CreatePipelineLayout(*m_GpuHelper, *bindGroupLayout);
+    auto pipelineLayout = CreatePipelineLayout(m_GpuHelper->GetDevice(), *bindGroupLayout);
     MLG_CHECK(pipelineLayout);
 
     return std::unique_ptr<GpuCompositorPass>(
@@ -202,53 +247,45 @@ GpuCompositorPass::CreateTask::OnUpdate()
 
 /// GpuCompositorPass
 
-Result<>
-GpuCompositorPass::SetInputs(const Inputs& inputs)
+GpuCompositorPass::GpuCompositorPass(const GpuHelper& gpuHelper,
+    wgpu::ShaderModule shader,
+    wgpu::Sampler sampler,
+    wgpu::BindGroupLayout bindGroupLayout,
+    wgpu::PipelineLayout pipelineLayout)
+    : m_GpuHelper(&gpuHelper),
+      m_Shader(std::move(shader)),
+      m_Sampler(std::move(sampler)),
+      m_BindGroup0Layout(std::move(bindGroupLayout)),
+      m_PipelineLayout(std::move(pipelineLayout))
 {
-    MLG_CHECK(inputs.Validate(), "Inputs are not valid");
+    MLG_ASSERT(m_Shader, "Shader module is not valid");
+    MLG_ASSERT(m_Sampler, "Sampler is not valid");
+    MLG_ASSERT(m_BindGroup0Layout, "Bind group layout is not valid");
+    MLG_ASSERT(m_PipelineLayout, "Pipeline layout is not valid");
+}
 
-    if(inputs != m_Inputs)
+Result<>
+GpuCompositorPass::SetSourceRenderTarget(const GpuRenderTarget& src)
+{
+    if(!m_SrcRenderTarget || src != *m_SrcRenderTarget)
     {
-        if(!m_Inputs || inputs.Texture != m_Inputs->Texture)
-        {
-            // Rebuild the bind group
-            m_InputsBindGroup = {};
-        }
-
-        m_Inputs = inputs;
+        m_SrcRenderTarget = src;
+        // Rebuild the bind group
+        m_BindGroup0 = {};
     }
 
     return Result<>::Ok;
 }
 
 Result<>
-GpuCompositorPass::SetOutputs(const Outputs& outputs)
-{
-    MLG_CHECK(outputs.Validate(), "Outputs are not valid");
-
-    if(outputs != m_Outputs)
-    {
-        if(!m_Outputs || outputs.RenderTarget->GetFormat() != m_Outputs->RenderTarget->GetFormat())
-        {
-            // Rebuild the pipeline
-            m_Pipeline = {};
-        }
-
-        m_Outputs = outputs;
-    }
-
-    return Result<>::Ok;
-}
-
-Result<>
-GpuCompositorPass::Execute()
+GpuCompositorPass::Execute(const GpuRenderTarget& dst, const Rect& dstRect)
 {
     const wgpu::Device gpuDevice = m_GpuHelper->GetDevice();
-    
+
     const wgpu::CommandEncoder cmdEncoder = gpuDevice.CreateCommandEncoder();
     MLG_CHECK(cmdEncoder, "Failed to create command encoder");
 
-    MLG_CHECK(Execute(cmdEncoder));
+    MLG_CHECK(Execute(dst, dstRect, cmdEncoder));
 
     const wgpu::CommandBuffer cmdBuf = cmdEncoder.Finish(nullptr);
     MLG_CHECK(cmdBuf, "Failed to finish command buffer");
@@ -262,11 +299,12 @@ GpuCompositorPass::Execute()
 }
 
 Result<>
-GpuCompositorPass::Execute(const wgpu::CommandEncoder& cmdEncoder)
+GpuCompositorPass::Execute(
+    const GpuRenderTarget& dst, const Rect& dstRect, const wgpu::CommandEncoder& cmdEncoder)
 {
     MLG_SCOPED_TIMER("GpuCompositorPass.Execute")
 
-    auto renderPassResult = CreateRenderPassEncoder(cmdEncoder);
+    auto renderPassResult = CreateRenderPassEncoder(dst, dstRect, cmdEncoder);
     MLG_CHECK(renderPassResult, "Failed to create render pass encoder");
 
     const wgpu::RenderPassEncoder renderPass = std::move(*renderPassResult);
@@ -280,151 +318,85 @@ GpuCompositorPass::Execute(const wgpu::CommandEncoder& cmdEncoder)
 // private:
 
 Result<>
-GpuCompositorPass::EnsurePipeline()
+GpuCompositorPass::EnsurePipeline(const wgpu::TextureFormat targetFormat)
 {
+    if(m_TargetFormat != targetFormat && wgpu::TextureFormat::Undefined != m_TargetFormat)
+    {
+        MLG_WARN("Target format changed, recreating pipeline");
+        m_Pipeline = {};
+    }
+
     if(m_Pipeline)
     {
         return Result<>::Ok;
     }
 
-    MLG_CHECK(m_Outputs, "Outputs are not valid - forget to call SetOutputs()?");
-
-    static constexpr wgpu::BlendState blendState //
-    {
-        .color =
-        {
-            .operation = wgpu::BlendOperation::Add,
-            .srcFactor = wgpu::BlendFactor::One,
-            .dstFactor = wgpu::BlendFactor::Zero,
-        },
-        .alpha =
-        {
-            .operation = wgpu::BlendOperation::Add,
-            .srcFactor = wgpu::BlendFactor::One,
-            .dstFactor = wgpu::BlendFactor::Zero,
-        },
-    };
-
-    const wgpu::TextureFormat targetFormat = m_Outputs->RenderTarget->GetFormat();
-
-    const wgpu::ColorTargetState colorTargetState //
-        {
-            .format = targetFormat,
-            .blend = &blendState,
-            .writeMask = wgpu::ColorWriteMask::All,
-        };
-
-    const char* fragmentEntry = nullptr;
-
-    if(wgpu::TextureFormat::RGBA8UnormSrgb == targetFormat
-        || wgpu::TextureFormat::BGRA8UnormSrgb == targetFormat)
-    {
-        fragmentEntry = FragmentEntry_srgb;
-    }
-    else
-    {
-        fragmentEntry = FragmentEntry_non_srgb;
-    }
-
-    const wgpu::FragmentState fragmentState //
-        {
-            .module = m_Shader,
-            .entryPoint = fragmentEntry,
-            .targetCount = 1,
-            .targets = &colorTargetState,
-        };
-
-    const wgpu::RenderPipelineDescriptor desc//
-    {
-        .label = "GpuCompositorPass",
-        .layout = m_PipelineLayout,
-        .vertex =
-        {
-            .module = m_Shader,
-            .entryPoint = VertexEntry,
-            .bufferCount = 0,
-            .buffers = nullptr,
-        },
-        .primitive =
-        {
-            .topology = wgpu::PrimitiveTopology::TriangleList,
-            .stripIndexFormat = wgpu::IndexFormat::Undefined,
-            .frontFace = wgpu::FrontFace::CW,
-            .cullMode = wgpu::CullMode::Back,
-            .unclippedDepth = false,
-        },
-        .depthStencil = nullptr, // No depth/stencil for this pipeline
-        .multisample =
-        {
-            .count = 1,
-            .mask = 0xFFFFFFFF,
-            .alphaToCoverageEnabled = false,
-        },
-        .fragment = &fragmentState,
-    };
-
-    m_Pipeline = m_GpuHelper->GetDevice().CreateRenderPipeline(&desc);
-    MLG_CHECK(m_Pipeline, "Failed to create pipeline");
+    auto pipelineResult =
+        CreatePipeline(m_GpuHelper->GetDevice(), m_PipelineLayout, m_Shader, targetFormat);
+    MLG_CHECK(pipelineResult, "Failed to create pipeline");
+    m_Pipeline = *pipelineResult;
+    m_TargetFormat = targetFormat;
 
     return Result<>::Ok;
 }
 
 Result<>
-GpuCompositorPass::EnsureInputsBindGroup()
+GpuCompositorPass::EnsureBindGroup0()
 {
-    if(m_InputsBindGroup)
+    if(m_BindGroup0)
     {
         return Result<>::Ok;
     }
 
-    MLG_CHECK(m_Inputs, "Inputs are not valid - forget to call SetInputs()?");
+    MLG_CHECK(m_SrcRenderTarget,
+        "Source render target is not valid - forget to call SetSourceRenderTarget()?");
 
-    auto entries = CreateInputBindGroupEntries(m_Inputs.value(), m_Sampler);
+    const auto bgResult = BindGroup0::Create(m_SrcRenderTarget->GetTexture(), m_Sampler);
+    MLG_CHECK(bgResult, "Failed to create bind group 0");
+
+    const auto entries = bgResult->GetBindGroupEntries();
 
     const wgpu::BindGroupDescriptor desc //
         {
-            .label = "GpuCompositorPass::Inputs",
-            .layout = m_BindGroupLayout,
+            .label = "GpuCompositorPass::BindGroup0",
+            .layout = m_BindGroup0Layout,
             .entryCount = std::size(entries),
             .entries = entries.data(),
         };
 
-    m_InputsBindGroup = m_GpuHelper->GetDevice().CreateBindGroup(&desc);
-    MLG_CHECK(m_InputsBindGroup, "Failed to create bind group");
+    m_BindGroup0 = m_GpuHelper->GetDevice().CreateBindGroup(&desc);
+    MLG_CHECK(m_BindGroup0, "Failed to create bind group");
 
     return Result<>::Ok;
 }
 
 Result<wgpu::RenderPassEncoder>
-GpuCompositorPass::CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder)
+GpuCompositorPass::CreateRenderPassEncoder(
+    const GpuRenderTarget& dst, const Rect& dstRect, const wgpu::CommandEncoder& cmdEncoder)
 {
-    MLG_CHECK(EnsurePipeline());
-    MLG_CHECK(EnsureInputsBindGroup());
+    MLG_CHECK(EnsurePipeline(dst->GetFormat()));
+    MLG_CHECK(EnsureBindGroup0());
 
-    MLG_CHECK(m_Inputs, "Inputs are not valid - forget to call SetInputs()?");
-    MLG_CHECK(m_Outputs, "Outputs are not valid - forget to call SetOutputs()?");
+    MLG_CHECK(m_SrcRenderTarget,
+        "Source render target not valid - forget to call SetSourceRenderTarget()?");
 
-    MLG_CHECKV(m_Outputs->RenderTarget.Get() != m_Inputs->Texture,
-        "Output texture must be different from input texture");
+    MLG_CHECKV(dst != *m_SrcRenderTarget, "Output texture must be different from input texture");
 
-    const Rect targetRect({ .X = 0,
-        .Y = 0,
-        .Width = m_Outputs->RenderTarget->GetWidth(),
-        .Height = m_Outputs->RenderTarget->GetHeight() });
+    const Rect targetRect({ .X = 0, .Y = 0, .Width = dst->GetWidth(), .Height = dst->GetHeight() });
 
-    Rect dstRect = m_Inputs->DstRect;
+    Rect viewportRect = dstRect;
 
-    if(!targetRect.Contains(m_Inputs->DstRect))
+    if(!targetRect.Contains(viewportRect))
     {
-        MLG_CHECKV(targetRect.Intersects(m_Inputs->DstRect), "DstRect is outside of target rect");
+        MLG_CHECKV(targetRect.Intersects(viewportRect), "dstRect is outside of target rect");
 
-        dstRect = targetRect.Intersect(m_Inputs->DstRect);
+        viewportRect = targetRect.Intersect(viewportRect);
         MLG_WARN("dstRect clipped");
     }
 
     const wgpu::RenderPassColorAttachment attachment //
         {
-            .view = m_Outputs->RenderTarget->CreateView(),
+            .view = dst->CreateView(),
             .loadOp = wgpu::LoadOp::Clear,
             .storeOp = wgpu::StoreOp::Store,
             .clearValue = { .r = 0.0f, .g = 0.0f, .b = 0.0f, .a = 1.0f },
@@ -441,21 +413,21 @@ GpuCompositorPass::CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncode
     MLG_CHECK(renderPass, "Failed to begin render pass");
 
     renderPass.SetPipeline(m_Pipeline);
-    renderPass.SetBindGroup(0, m_InputsBindGroup, 0, nullptr);
+    renderPass.SetBindGroup(0, m_BindGroup0, 0, nullptr);
 
     {
-        const float x = static_cast<float>(dstRect.GetX());
-        const float y = static_cast<float>(dstRect.GetY());
-        const float width = static_cast<float>(dstRect.GetWidth());
-        const float height = static_cast<float>(dstRect.GetHeight());
+        const float x = static_cast<float>(viewportRect.GetX());
+        const float y = static_cast<float>(viewportRect.GetY());
+        const float width = static_cast<float>(viewportRect.GetWidth());
+        const float height = static_cast<float>(viewportRect.GetHeight());
 
         renderPass.SetViewport(x, y, width, height, 0, 1);
     }
     {
-        const uint32_t x = static_cast<uint32_t>(dstRect.GetX());
-        const uint32_t y = static_cast<uint32_t>(dstRect.GetY());
-        const uint32_t width = static_cast<uint32_t>(dstRect.GetWidth());
-        const uint32_t height = static_cast<uint32_t>(dstRect.GetHeight());
+        const uint32_t x = static_cast<uint32_t>(viewportRect.GetX());
+        const uint32_t y = static_cast<uint32_t>(viewportRect.GetY());
+        const uint32_t width = static_cast<uint32_t>(viewportRect.GetWidth());
+        const uint32_t height = static_cast<uint32_t>(viewportRect.GetHeight());
 
         renderPass.SetScissorRect(x, y, width, height);
     }

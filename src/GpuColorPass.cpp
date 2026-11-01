@@ -1,8 +1,8 @@
+#include <webgpu/webgpu_cpp.h>
 #define MLG_LOGGER_NAME "CPAS"
 
-#include "GpuColorPass.h"
-
 #include "FileFetcher.h"
+#include "GpuColorPass.h"
 #include "GpuHelper.h"
 #include "PerfMetrics.h"
 #include "SceneTypes.h"
@@ -16,214 +16,46 @@ namespace
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 PerfCounter pcTriangleCount({ .Name = "GpuColorPass.Triangles" });
 
-constexpr wgpu::BindGroupLayoutEntry InputBindGroupLayoutEntries[]//
+constexpr const char* ShaderPath = "shaders/ColorShader.wgsl";
+constexpr const char* ShaderVertexEntry = "vs_main";
+constexpr const char* ShaderFragmentEntry = "fs_main";
+constexpr float kClearDepth = 1.0f;
+
+struct PipelinePair
 {
-    // World transform.
-    wgpu::BindGroupLayoutEntry//
-        {
-        .binding = 0,
-        .visibility = wgpu::ShaderStage::Vertex,
-        .buffer =
-        {
-            .type = wgpu::BufferBindingType::ReadOnlyStorage,
-            .hasDynamicOffset = false,
-            .minBindingSize = sizeof(ShaderInterop::WorldTransform),
-        },
-    },
-    // Clip transform.
-    wgpu::BindGroupLayoutEntry//
-    {
-        .binding = 1,
-        .visibility = wgpu::ShaderStage::Vertex,
-        .buffer =
-        {
-            .type = wgpu::BufferBindingType::ReadOnlyStorage,
-            .hasDynamicOffset = false,
-            .minBindingSize = sizeof(ShaderInterop::ClipSpaceTransform),
-        },
-    },
-    // Mesh instance parameters.
-    wgpu::BindGroupLayoutEntry//
-    {
-        .binding = 2,
-        .visibility = wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment,
-        .buffer =
-        {
-            .type = wgpu::BufferBindingType::ReadOnlyStorage,
-            .hasDynamicOffset = false,
-            .minBindingSize = sizeof(ShaderInterop::MeshInstanceParams),
-        },
-    },
-    // Camera parameters
-    wgpu::BindGroupLayoutEntry//
-    {
-        .binding = 3,
-        .visibility = wgpu::ShaderStage::Vertex,
-        .buffer =
-        {
-            .type = wgpu::BufferBindingType::Uniform,
-            .hasDynamicOffset = false,
-            .minBindingSize = sizeof(ShaderInterop::CameraParams),
-        },
-    },
+    wgpu::RenderPipeline OpaquePipeline;
+    wgpu::RenderPipeline TranslucentPipeline;
 };
 
-constexpr wgpu::BindGroupLayoutDescriptor InputBindGroupLayoutDescriptor //
-    {
-        .label = "GpuColorPass::InputsBindGroupLayout",
-        .entryCount = std::size(InputBindGroupLayoutEntries),
-        .entries = &InputBindGroupLayoutEntries[0],
-    };
-
-constexpr wgpu::BindGroupLayoutEntry MaterialBindGroupLayoutEntries[]//
+template<typename BindGroupType>
+Result<wgpu::BindGroupLayout>
+CreateBindGroupLayout(const wgpu::Device& gpuDevice, const std::string_view label)
 {
-    // Texture
-    wgpu::BindGroupLayoutEntry//
-    {
-        .binding = 0,
-        .visibility = wgpu::ShaderStage::Fragment,
-        .texture =
+    const wgpu::BindGroupLayoutDescriptor bgLayoutDesc //
         {
-            .sampleType = wgpu::TextureSampleType::Float,
-            .viewDimension = wgpu::TextureViewDimension::e2D,
-            .multisampled = false,
-        },
-    },
-    // Sampler
-    wgpu::BindGroupLayoutEntry//
-    {
-        .binding = 1,
-        .visibility = wgpu::ShaderStage::Fragment,
-        .sampler =
-        {
-            .type = wgpu::SamplerBindingType::Filtering,
-        },
-    },
-    // Material constants
-    wgpu::BindGroupLayoutEntry//
-    {
-        .binding = 2,
-        .visibility = wgpu::ShaderStage::Fragment,
-        .buffer =
-        {
-            .type = wgpu::BufferBindingType::Uniform,
-            .minBindingSize = sizeof(ShaderInterop::MaterialConstants)
-        },
-    },
-};
-
-constexpr wgpu::BindGroupLayoutDescriptor MaterialBindGroupLayoutDescriptor //
-    {
-        .label = "GpuColorPass::MaterialBindGroupLayout",
-        .entryCount = std::size(MaterialBindGroupLayoutEntries),
-        .entries = &MaterialBindGroupLayoutEntries[0],
-    };
-
-auto
-CreateInputBindGroupEntries(const GpuColorPass::Inputs& inputs)
-{
-    const std::array entries //
-        {
-            wgpu::BindGroupEntry //
-            {
-                .binding = 0,
-                .buffer = inputs.WorldTransforms.GetGpuBuffer(),
-                .offset = 0,
-                .size = inputs.WorldTransforms.BufferSize(),
-            },
-            wgpu::BindGroupEntry //
-            {
-                .binding = 1,
-                .buffer = inputs.ClipSpaceTransforms.GetGpuBuffer(),
-                .offset = 0,
-                .size = inputs.ClipSpaceTransforms.BufferSize(),
-            },
-            wgpu::BindGroupEntry //
-            {
-                .binding = 2,
-                .buffer = inputs.MeshInstanceParams.GetGpuBuffer(),
-                .offset = 0,
-                .size = inputs.MeshInstanceParams.BufferSize(),
-            },
-            wgpu::BindGroupEntry //
-            {
-                .binding = 3,
-                .buffer = inputs.CameraParams.GetGpuBuffer(),
-                .offset = 0,
-                .size = inputs.CameraParams.BufferSize(),
-            },
+            .label = label,
+            .entryCount = std::size(BindGroupType::LayoutEntries),
+            .entries = BindGroupType::LayoutEntries.data(),
         };
 
-    static_assert(std::size(entries) == std::size(InputBindGroupLayoutEntries),
-        "Bind group layout entries and bind group entries must have the same size");
-
-    return entries;
-}
-
-auto
-CreateMaterialBindGroupEntries(const wgpu::Texture& texture,
-    const wgpu::Sampler& sampler,
-    const GpuMaterialConstantsBuffer& materialConstants)
-{
-    const std::array entries //
-        {
-            wgpu::BindGroupEntry //
-            {
-                .binding = 0,
-                .textureView = texture.CreateView(),
-            },
-            wgpu::BindGroupEntry //
-            {
-                .binding = 1,
-                .sampler = sampler,
-            },
-            wgpu::BindGroupEntry //
-            {
-                .binding = 2,
-                .buffer = materialConstants.GetGpuBuffer(),
-                .offset = 0,
-                .size = materialConstants.BufferSize(),
-            },
-        };
-
-    static_assert(std::size(entries) == std::size(MaterialBindGroupLayoutEntries),
-        "Bind group layout entries and bind group entries must have the same size");
-
-    return entries;
-}
-
-// Creates a bind group layout for the inputs of the color pass.
-Result<wgpu::BindGroupLayout>
-CreateInputsBindGroupLayout(const wgpu::Device& gpuDevice)
-{
-    wgpu::BindGroupLayout layout = gpuDevice.CreateBindGroupLayout(&InputBindGroupLayoutDescriptor);
-    MLG_CHECK(layout, "Failed to create Inputs bind group layout");
-
-    return layout;
-}
-
-Result<wgpu::BindGroupLayout>
-CreateMaterialBindGroupLayout(const wgpu::Device& gpuDevice)
-{
-    wgpu::BindGroupLayout layout =
-        gpuDevice.CreateBindGroupLayout(&MaterialBindGroupLayoutDescriptor);
-    MLG_CHECK(layout, "Failed to create Material bind group layout");
+    wgpu::BindGroupLayout layout = gpuDevice.CreateBindGroupLayout(&bgLayoutDesc);
+    MLG_CHECK(layout, "Failed to create bind group layout");
 
     return layout;
 }
 
 Result<wgpu::PipelineLayout>
 CreatePipelineLayout(const wgpu::Device& gpuDevice,
-    const wgpu::BindGroupLayout& inputsBindGroupLayout,
-    const wgpu::BindGroupLayout& materialBindGroupLayout)
+    const wgpu::BindGroupLayout& bindGroup0Layout,
+    const wgpu::BindGroupLayout& bindGroup1Layout)
 {
-    MLG_CHECK(inputsBindGroupLayout, "Inputs bind group layout is not valid");
-    MLG_CHECK(materialBindGroupLayout, "Material bind group layout is not valid");
+    MLG_CHECK(bindGroup0Layout, "Bind group 0 layout is not valid");
+    MLG_CHECK(bindGroup1Layout, "Bind group 1 layout is not valid");
 
     const wgpu::BindGroupLayout bindGroupLayouts[] //
         {
-            inputsBindGroupLayout,
-            materialBindGroupLayout,
+            bindGroup0Layout,
+            bindGroup1Layout,
         };
 
     const wgpu::PipelineLayoutDescriptor pipelineLayoutDesc //
@@ -272,18 +104,176 @@ GetVertexBufferLayout()
     return layout;
 }
 
-bool
-BindGroup0NeedsRefresh(const GpuColorPass::Inputs& currentInputs,
-    const GpuColorPass::Inputs& newInputs)
+Result<PipelinePair>
+CreateRenderPipelines(const wgpu::Device& gpuDevice,
+    const wgpu::BindGroupLayout& bg0Layout,
+    const wgpu::BindGroupLayout& bg1Layout,
+    const wgpu::ShaderModule& shader)
 {
-    return currentInputs.WorldTransforms.GetGpuBuffer().Get()
-        != newInputs.WorldTransforms.GetGpuBuffer().Get()
-        || currentInputs.ClipSpaceTransforms.GetGpuBuffer().Get()
-        != newInputs.ClipSpaceTransforms.GetGpuBuffer().Get()
-        || currentInputs.MeshInstanceParams.GetGpuBuffer().Get()
-        != newInputs.MeshInstanceParams.GetGpuBuffer().Get()
-        || currentInputs.CameraParams.GetGpuBuffer().Get()
-        != newInputs.CameraParams.GetGpuBuffer().Get();
+    auto pipelineLayout = CreatePipelineLayout(gpuDevice, bg0Layout, bg1Layout);
+    MLG_CHECK(pipelineLayout, "Failed to create pipeline layout");
+
+    static constexpr wgpu::BlendState translucentBlendState //
+        {
+            .color =
+            {
+                .operation = wgpu::BlendOperation::Add,
+                .srcFactor = wgpu::BlendFactor::SrcAlpha,
+                .dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha,
+            },
+            .alpha =
+            {
+                .operation = wgpu::BlendOperation::Add,
+                .srcFactor = wgpu::BlendFactor::One,
+                .dstFactor = wgpu::BlendFactor::Zero,
+            },
+        };
+
+    static constexpr wgpu::ColorTargetState translucentTargetState //
+        {
+            .format = GpuHelper::kRenderTargetFormat,
+            .blend = &translucentBlendState,
+            .writeMask = wgpu::ColorWriteMask::All,
+        };
+
+    static constexpr wgpu::ColorTargetState opaqueTargetState //
+        {
+            .format = GpuHelper::kRenderTargetFormat,
+            .blend = nullptr,
+            .writeMask = wgpu::ColorWriteMask::All,
+        };
+
+    const wgpu::FragmentState translucentFragmentState //
+        {
+            .module = shader,
+            .entryPoint = ShaderFragmentEntry,
+            .targetCount = 1,
+            .targets = &translucentTargetState,
+        };
+
+    const wgpu::FragmentState opaqueFragmentState //
+        {
+            .module = shader,
+            .entryPoint = ShaderFragmentEntry,
+            .targetCount = 1,
+            .targets = &opaqueTargetState,
+        };
+
+    static constexpr wgpu::DepthStencilState opaqueDepthStencilState //
+        {
+            .format = GpuHelper::kDepthBufferFormat,
+            .depthWriteEnabled = true,
+            .depthCompare = wgpu::CompareFunction::Less,
+            /*.stencilFront =
+            {
+                .compare = wgpu::CompareFunction::Always,
+                .failOp = wgpu::StencilOperation::Keep,
+                .depthFailOp = wgpu::StencilOperation::Keep,
+                .passOp = wgpu::StencilOperation::Keep,
+            },
+            .stencilBack =
+            {
+                .compare = wgpu::CompareFunction::Always,
+                .failOp = wgpu::StencilOperation::Keep,
+                .depthFailOp = wgpu::StencilOperation::Keep,
+                .passOp = wgpu::StencilOperation::Keep,
+            },
+            .stencilReadMask = 0xFF,
+            .stencilWriteMask = 0xFF,*/
+            .depthBias = 0,
+            .depthBiasSlopeScale = 0.0f,
+            .depthBiasClamp = 0.0f,
+        };
+
+    static constexpr wgpu::DepthStencilState translucentDepthStencilState //
+        {
+            .format = GpuHelper::kDepthBufferFormat,
+            .depthWriteEnabled = false, // Disabled for translucent objects.
+            .depthCompare = wgpu::CompareFunction::Less,
+            /*.stencilFront =
+            {
+                .compare = wgpu::CompareFunction::Always,
+                .failOp = wgpu::StencilOperation::Keep,
+                .depthFailOp = wgpu::StencilOperation::Keep,
+                .passOp = wgpu::StencilOperation::Keep,
+            },
+            .stencilBack =
+            {
+                .compare = wgpu::CompareFunction::Always,
+                .failOp = wgpu::StencilOperation::Keep,
+                .depthFailOp = wgpu::StencilOperation::Keep,
+                .passOp = wgpu::StencilOperation::Keep,
+            },
+            .stencilReadMask = 0xFF,
+            .stencilWriteMask = 0xFF,*/
+            .depthBias = 0,
+            .depthBiasSlopeScale = 0.0f,
+            .depthBiasClamp = 0.0f,
+        };
+
+    static constexpr wgpu::VertexBufferLayout vertexBufferLayouts[] //
+        {
+            GetVertexBufferLayout(),
+        };
+
+    const wgpu::VertexState vertexState //
+        {
+            .module = shader,
+            .entryPoint = ShaderVertexEntry,
+            .bufferCount = 1,
+            .buffers = &vertexBufferLayouts[0],
+        };
+
+    static constexpr wgpu::PrimitiveState primitiveState //
+        {
+            .topology = wgpu::PrimitiveTopology::TriangleList,
+            .stripIndexFormat = wgpu::IndexFormat::Undefined,
+            .frontFace = wgpu::FrontFace::CW,
+            .cullMode = wgpu::CullMode::Back,
+            .unclippedDepth = false,
+        };
+
+    static constexpr wgpu::MultisampleState multisampleState //
+        {
+            .count = 1,
+            .mask = 0xFFFFFFFF,
+            .alphaToCoverageEnabled = false,
+        };
+
+    const wgpu::RenderPipelineDescriptor opaqueDescriptor //
+        {
+            .label = "GpuColorPass_Opaque",
+            .layout = *pipelineLayout,
+            .vertex = vertexState,
+            .primitive = primitiveState,
+            .depthStencil = &opaqueDepthStencilState,
+            .multisample = multisampleState,
+            .fragment = &opaqueFragmentState,
+        };
+
+    const wgpu::RenderPipelineDescriptor translucentDescriptor //
+        {
+            .label = "GpuColorPass_Translucent",
+            .layout = *pipelineLayout,
+            .vertex = vertexState,
+            .primitive = primitiveState,
+            .depthStencil = &translucentDepthStencilState,
+            .multisample = multisampleState,
+            .fragment = &translucentFragmentState,
+        };
+
+    wgpu::RenderPipeline opaquePipeline = gpuDevice.CreateRenderPipeline(&opaqueDescriptor);
+    MLG_CHECK(opaquePipeline, "Failed to create opaque render pipeline");
+
+    wgpu::RenderPipeline translucentPipeline =
+        gpuDevice.CreateRenderPipeline(&translucentDescriptor);
+    MLG_CHECK(translucentPipeline, "Failed to create translucent render pipeline");
+
+    return PipelinePair //
+        {
+            .OpaquePipeline = std::move(opaquePipeline),
+            .TranslucentPipeline = std::move(translucentPipeline),
+        };
 }
 
 Result<wgpu::Sampler>
@@ -324,28 +314,31 @@ GpuColorPass::CreateTask::Take()
 
     const wgpu::Device gpuDevice = m_GpuHelper->GetDevice();
 
-    auto shader = m_ShaderFetcher.Take();
-    MLG_CHECK(shader, "Failed to fetch shader: {}", ShaderPath);
+    auto shaderResult = m_ShaderFetcher.Take();
+    MLG_CHECK(shaderResult, "Failed to fetch shader: {}", ShaderPath);
 
-    auto inputsBindGroupLayout = CreateInputsBindGroupLayout(gpuDevice);
-    MLG_CHECK(inputsBindGroupLayout, "Failed to create Inputs bind group layout");
+    auto bg0LayoutResult =
+        CreateBindGroupLayout<BindGroup0>(gpuDevice, "GpuColorPass::BindGroup0Layout");
+    MLG_CHECK(bg0LayoutResult, "Failed to create bind group 0 layout");
 
-    auto materialBindGroupLayout = CreateMaterialBindGroupLayout(gpuDevice);
-    MLG_CHECK(materialBindGroupLayout, "Failed to create Material bind group layout");
+    auto bg1LayoutResult =
+        CreateBindGroupLayout<BindGroup1>(gpuDevice, "GpuColorPass::BindGroup1Layout");
+    MLG_CHECK(bg1LayoutResult, "Failed to create bind group 1 layout");
 
-    auto pipelineLayout =
-        CreatePipelineLayout(gpuDevice, *inputsBindGroupLayout, *materialBindGroupLayout);
-    MLG_CHECK(pipelineLayout, "Failed to create pipeline layout");
+    auto samplerResult = CreateDefaultSampler(gpuDevice);
+    MLG_CHECK(samplerResult, "Failed to create default sampler");
 
-    auto defaultSampler = CreateDefaultSampler(gpuDevice);
-    MLG_CHECK(defaultSampler, "Failed to create default sampler");
+    const auto pipelineResult =
+        CreateRenderPipelines(gpuDevice, *bg0LayoutResult, *bg1LayoutResult, *shaderResult);
+
+    MLG_CHECK(pipelineResult, "Failed to create render pipelines");
 
     return std::unique_ptr<GpuColorPass>(new GpuColorPass(*m_GpuHelper,
-        *shader,
-        *inputsBindGroupLayout,
-        *materialBindGroupLayout,
-        *pipelineLayout,
-        *defaultSampler));
+        *bg0LayoutResult,
+        *bg1LayoutResult,
+        pipelineResult->OpaquePipeline,
+        pipelineResult->TranslucentPipeline,
+        *samplerResult));
 }
 
 // private:
@@ -403,28 +396,58 @@ GpuColorPass::CreateTask::OnUpdate()
 
 /// GpuColorPass
 
-Result<>
-GpuColorPass::SetInputs(const Inputs& inputs)
+GpuColorPass::GpuColorPass(const GpuHelper& gpuHelper,
+    wgpu::BindGroupLayout bg0Layout,
+    wgpu::BindGroupLayout bg1Layout,
+    wgpu::RenderPipeline opaquePipeline,
+    wgpu::RenderPipeline translucentPipeline,
+    wgpu::Sampler defaultSampler)
+    : m_GpuHelper(&gpuHelper),
+      m_BindGroup0Layout(std::move(bg0Layout)),
+      m_BindGroup1Layout(std::move(bg1Layout)),
+      m_OpaquePipeline(std::move(opaquePipeline)),
+      m_TranslucentPipeline(std::move(translucentPipeline)),
+      m_DefaultSampler(std::move(defaultSampler))
 {
-    MLG_CHECK(inputs.Validate(), "Inputs are not valid");
+    MLG_ASSERT(m_BindGroup0Layout, "Bind group 0 layout is not valid");
+    MLG_ASSERT(m_BindGroup1Layout, "Bind group 1 layout is not valid");
+    MLG_ASSERT(m_OpaquePipeline, "Opaque pipeline is not valid");
+    MLG_ASSERT(m_TranslucentPipeline, "Translucent pipeline is not valid");
+    MLG_ASSERT(m_DefaultSampler, "Default sampler is not valid");
+}
 
-    if(!m_Inputs || BindGroup0NeedsRefresh(*m_Inputs, inputs))
-    {
-        // Rebuild the bind group
-        m_InputsBindGroup = {};
-    }
+Result<>
+GpuColorPass::SetGeometryBuffers(const GpuVertexBuffer& vertices, const GpuIndexBuffer& indices)
+{
+    MLG_CHECKV(vertices.IsValid(), "Invalid vertices buffer");
+    MLG_CHECKV(indices.IsValid(), "Invalid indices buffer");
 
-    m_Inputs = inputs;
+    m_Vertices = vertices;
+    m_Indices = indices;
 
     return Result<>::Ok;
 }
 
 Result<>
-GpuColorPass::SetOutputs(const Outputs& outputs)
+GpuColorPass::SetBindGroup(const GpuColorPass::BindGroup0& bg0)
 {
-    MLG_CHECK(outputs.Validate(), "Outputs are not valid");
+    if(!m_BindGroup0Params || m_BindGroup0Params != bg0)
+    {
+        // Rebuild the bind group
+        m_BindGroup0 = {};
+    }
 
-    m_Outputs = outputs;
+    m_BindGroup0Params = bg0;
+
+    return Result<>::Ok;
+}
+
+Result<>
+GpuColorPass::SetRenderAttachments(const RenderAttachments& attachments)
+{
+    MLG_CHECK(attachments.Validate(), "Render attachments are not valid");
+
+    m_RenderAttachments = attachments;
 
     return Result<>::Ok;
 }
@@ -438,7 +461,7 @@ GpuColorPass::Execute(std::span<MeshInstance> meshes,
     const wgpu::CommandEncoder cmdEncoder = gpuDevice.CreateCommandEncoder();
     MLG_CHECK(cmdEncoder, "Failed to create command encoder");
 
-    MLG_CHECK(Execute(cmdEncoder, meshes, materialProperties));
+    MLG_CHECK(Execute(meshes, materialProperties, cmdEncoder));
 
     const wgpu::CommandBuffer cmdBuf = cmdEncoder.Finish(nullptr);
     MLG_CHECK(cmdBuf, "Failed to finish command buffer");
@@ -452,19 +475,22 @@ GpuColorPass::Execute(std::span<MeshInstance> meshes,
 }
 
 Result<>
-GpuColorPass::Execute(const wgpu::CommandEncoder& cmdEncoder,
-    std::span<MeshInstance> meshes,
-    const std::span<const GpuMaterialProperties> materialProperties)
+GpuColorPass::Execute(std::span<MeshInstance> meshes,
+    const std::span<const GpuMaterialProperties> materialProperties,
+    const wgpu::CommandEncoder& cmdEncoder)
 {
     MLG_SCOPED_TIMER("GpuColorPass.Execute")
+
+    MLG_CHECKV(m_RenderAttachments,
+        "Render attachments are not valid - forget to call SetRenderAttachments()?");
 
     auto renderPassResult = CreateRenderPassEncoder(cmdEncoder);
     MLG_CHECK(renderPassResult, "Failed to create render pass encoder");
 
     const wgpu::RenderPassEncoder renderPass = std::move(*renderPassResult);
 
-    const uint32_t w = m_Outputs->RenderTarget->GetWidth();
-    const uint32_t h = m_Outputs->RenderTarget->GetHeight();
+    const uint32_t w = m_RenderAttachments->RenderTarget->GetWidth();
+    const uint32_t h = m_RenderAttachments->RenderTarget->GetHeight();
 
     renderPass.SetViewport(0, 0, static_cast<float>(w), static_cast<float>(h), 0, 1);
 
@@ -566,12 +592,15 @@ GpuColorPass::CreateMaterialBindGroup(const wgpu::Texture& texture,
     const GpuMaterialConstantsBuffer& materialConstants,
     const std::string_view name) const
 {
-    auto entries = CreateMaterialBindGroupEntries(texture, m_DefaultSampler, materialConstants);
+    auto bgResult = BindGroup1::Create(texture, m_DefaultSampler, materialConstants);
+    MLG_CHECK(bgResult, "Failed to create bind group 1");
+
+    const auto entries = bgResult->GetBindGroupEntries();
 
     const wgpu::BindGroupDescriptor desc = //
         {
             .label = name,
-            .layout = m_MaterialBindGroupLayout,
+            .layout = m_BindGroup1Layout,
             .entryCount = std::size(entries),
             .entries = entries.data(),
         };
@@ -585,193 +614,27 @@ GpuColorPass::CreateMaterialBindGroup(const wgpu::Texture& texture,
 // private:
 
 Result<>
-GpuColorPass::EnsurePipeline()
+GpuColorPass::EnsureBindGroup0()
 {
-    if(m_TranslucentPipeline && m_OpaquePipeline)
+    if(m_BindGroup0)
     {
         return Result<>::Ok;
     }
 
-    static constexpr wgpu::BlendState translucentBlendState //
-        {
-            .color =
-            {
-                .operation = wgpu::BlendOperation::Add,
-                .srcFactor = wgpu::BlendFactor::SrcAlpha,
-                .dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha,
-            },
-            .alpha =
-            {
-                .operation = wgpu::BlendOperation::Add,
-                .srcFactor = wgpu::BlendFactor::One,
-                .dstFactor = wgpu::BlendFactor::Zero,
-            },
-        };
+    MLG_CHECKV(m_BindGroup0Params, "BindGroup 0 not valid - forget to call SetBindGroup()?");
 
-    static constexpr wgpu::ColorTargetState translucentTargetState //
-        {
-            .format = GpuHelper::kRenderTargetFormat,
-            .blend = &translucentBlendState,
-            .writeMask = wgpu::ColorWriteMask::All,
-        };
-
-    static constexpr wgpu::ColorTargetState opaqueTargetState //
-        {
-            .format = GpuHelper::kRenderTargetFormat,
-            .blend = nullptr,
-            .writeMask = wgpu::ColorWriteMask::All,
-        };
-
-    const wgpu::FragmentState translucentFragmentState //
-        {
-            .module = m_Shader,
-            .entryPoint = FragmentEntry,
-            .targetCount = 1,
-            .targets = &translucentTargetState,
-        };
-
-    const wgpu::FragmentState opaqueFragmentState //
-        {
-            .module = m_Shader,
-            .entryPoint = FragmentEntry,
-            .targetCount = 1,
-            .targets = &opaqueTargetState,
-        };
-
-    static constexpr wgpu::DepthStencilState opaqueDepthStencilState //
-        {
-            .format = GpuHelper::kDepthBufferFormat,
-            .depthWriteEnabled = true,
-            .depthCompare = wgpu::CompareFunction::Less,
-            /*.stencilFront =
-            {
-                .compare = wgpu::CompareFunction::Always,
-                .failOp = wgpu::StencilOperation::Keep,
-                .depthFailOp = wgpu::StencilOperation::Keep,
-                .passOp = wgpu::StencilOperation::Keep,
-            },
-            .stencilBack =
-            {
-                .compare = wgpu::CompareFunction::Always,
-                .failOp = wgpu::StencilOperation::Keep,
-                .depthFailOp = wgpu::StencilOperation::Keep,
-                .passOp = wgpu::StencilOperation::Keep,
-            },
-            .stencilReadMask = 0xFF,
-            .stencilWriteMask = 0xFF,*/
-            .depthBias = 0,
-            .depthBiasSlopeScale = 0.0f,
-            .depthBiasClamp = 0.0f,
-        };
-
-    static constexpr wgpu::DepthStencilState translucentDepthStencilState //
-        {
-            .format = GpuHelper::kDepthBufferFormat,
-            .depthWriteEnabled = false, // Disabled for translucent objects.
-            .depthCompare = wgpu::CompareFunction::Less,
-            /*.stencilFront =
-            {
-                .compare = wgpu::CompareFunction::Always,
-                .failOp = wgpu::StencilOperation::Keep,
-                .depthFailOp = wgpu::StencilOperation::Keep,
-                .passOp = wgpu::StencilOperation::Keep,
-            },
-            .stencilBack =
-            {
-                .compare = wgpu::CompareFunction::Always,
-                .failOp = wgpu::StencilOperation::Keep,
-                .depthFailOp = wgpu::StencilOperation::Keep,
-                .passOp = wgpu::StencilOperation::Keep,
-            },
-            .stencilReadMask = 0xFF,
-            .stencilWriteMask = 0xFF,*/
-            .depthBias = 0,
-            .depthBiasSlopeScale = 0.0f,
-            .depthBiasClamp = 0.0f,
-        };
-
-    static constexpr wgpu::VertexBufferLayout vertexBufferLayouts[] //
-        {
-            GetVertexBufferLayout(),
-        };
-
-    const wgpu::VertexState vertexState //
-        {
-            .module = m_Shader,
-            .entryPoint = VertexEntry,
-            .bufferCount = 1,
-            .buffers = &vertexBufferLayouts[0],
-        };
-
-    static constexpr wgpu::PrimitiveState primitiveState //
-        {
-            .topology = wgpu::PrimitiveTopology::TriangleList,
-            .stripIndexFormat = wgpu::IndexFormat::Undefined,
-            .frontFace = wgpu::FrontFace::CW,
-            .cullMode = wgpu::CullMode::Back,
-            .unclippedDepth = false,
-        };
-
-    static constexpr wgpu::MultisampleState multisampleState //
-        {
-            .count = 1,
-            .mask = 0xFFFFFFFF,
-            .alphaToCoverageEnabled = false,
-        };
-
-    const wgpu::RenderPipelineDescriptor opaqueDescriptor //
-        {
-            .label = "GpuColorPass_Opaque",
-            .layout = m_PipelineLayout,
-            .vertex = vertexState,
-            .primitive = primitiveState,
-            .depthStencil = &opaqueDepthStencilState,
-            .multisample = multisampleState,
-            .fragment = &opaqueFragmentState,
-        };
-
-    const wgpu::RenderPipelineDescriptor translucentDescriptor //
-        {
-            .label = "GpuColorPass_Translucent",
-            .layout = m_PipelineLayout,
-            .vertex = vertexState,
-            .primitive = primitiveState,
-            .depthStencil = &translucentDepthStencilState,
-            .multisample = multisampleState,
-            .fragment = &translucentFragmentState,
-        };
-
-    m_OpaquePipeline = m_GpuHelper->GetDevice().CreateRenderPipeline(&opaqueDescriptor);
-    MLG_CHECK(m_OpaquePipeline, "Failed to create render pipeline");
-
-    m_TranslucentPipeline = m_GpuHelper->GetDevice().CreateRenderPipeline(&translucentDescriptor);
-    MLG_CHECK(m_TranslucentPipeline, "Failed to create render pipeline");
-
-    return Result<>::Ok;
-}
-
-Result<>
-GpuColorPass::EnsureInputsBindGroup()
-{
-    if(m_InputsBindGroup)
-    {
-        return Result<>::Ok;
-    }
-
-    MLG_CHECKV(m_Inputs, "Inputs are not valid - forget to call SetInputs()?");
-
-    auto entries = CreateInputBindGroupEntries(m_Inputs.value());
+    const auto entries = m_BindGroup0Params->GetBindGroupEntries();
 
     const wgpu::BindGroupDescriptor desc = //
         {
-            .label = "GpuColorPass::InputsBindGroup",
-            .layout = m_InputsBindGroupLayout,
+            .label = "GpuColorPass::BindGroup0",
+            .layout = m_BindGroup0Layout,
             .entryCount = std::size(entries),
             .entries = entries.data(),
         };
 
-    m_InputsBindGroup = m_GpuHelper->GetDevice().CreateBindGroup(&desc);
-    MLG_CHECKV(m_InputsBindGroup, "Failed to create bind group");
+    m_BindGroup0 = m_GpuHelper->GetDevice().CreateBindGroup(&desc);
+    MLG_CHECKV(m_BindGroup0, "Failed to create bind group 0");
 
     return Result<>::Ok;
 }
@@ -779,18 +642,20 @@ GpuColorPass::EnsureInputsBindGroup()
 Result<wgpu::RenderPassEncoder>
 GpuColorPass::CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder)
 {
-    MLG_CHECK(EnsurePipeline());
-    MLG_CHECK(EnsureInputsBindGroup());
+    MLG_CHECKV(m_BindGroup0Params, "BindGroup 0 not valid - forget to call SetBindGroup()?");
+    MLG_CHECKV(m_Vertices, "Vertex buffer not set - forget to call SetGeometryBuffers()?");
+    MLG_CHECKV(m_Indices, "Index buffer not set - forget to call SetGeometryBuffers()?");
+    MLG_CHECKV(m_RenderAttachments,
+        "Render attachments are not valid - forget to call SetRenderAttachments()?");
 
-    MLG_CHECKV(m_Inputs, "Inputs are not valid - forget to call SetInputs()?");
-    MLG_CHECKV(m_Outputs, "Outputs are not valid - forget to call SetOutputs()?");
-
-    MLG_CHECKV(m_Outputs->RenderTarget->GetFormat() == GpuHelper::kRenderTargetFormat,
+    MLG_CHECKV(m_RenderAttachments->RenderTarget->GetFormat() == GpuHelper::kRenderTargetFormat,
         "Unexpected render target format");
+
+    MLG_CHECKV(EnsureBindGroup0());
 
     const wgpu::RenderPassColorAttachment attachment //
         {
-            .view = m_Outputs->RenderTarget->CreateView(),
+            .view = m_RenderAttachments->RenderTarget->CreateView(),
             .depthSlice = WGPU_DEPTH_SLICE_UNDEFINED,
             .loadOp = wgpu::LoadOp::Clear,
             .storeOp = wgpu::StoreOp::Store,
@@ -799,7 +664,7 @@ GpuColorPass::CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder)
 
     const wgpu::RenderPassDepthStencilAttachment depthStencilAttachment //
         {
-            .view = m_Outputs->DepthBuffer->CreateView(),
+            .view = m_RenderAttachments->DepthBuffer->CreateView(),
             .depthLoadOp = wgpu::LoadOp::Clear,
             .depthStoreOp = wgpu::StoreOp::Store,
             .depthClearValue = kClearDepth,
@@ -821,7 +686,7 @@ GpuColorPass::CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder)
 
     {
         MLG_SCOPED_TIMER("GpuColorPass.Prepare.SetPerFrameBindGroup");
-        renderPass.SetBindGroup(0, m_InputsBindGroup, 0, nullptr);
+        renderPass.SetBindGroup(0, m_BindGroup0, 0, nullptr);
     }
 
     {
@@ -837,15 +702,9 @@ GpuColorPass::CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder)
             ? wgpu::IndexFormat::Uint32
             : wgpu::IndexFormat::Uint16;
 
-        renderPass.SetVertexBuffer(0,
-            m_Inputs->Vertices.GetGpuBuffer(),
-            0,
-            m_Inputs->Vertices.BufferSize());
+        renderPass.SetVertexBuffer(0, m_Vertices->GetBuffer(), 0, m_Vertices->GetSize());
 
-        renderPass.SetIndexBuffer(m_Inputs->Indices.GetGpuBuffer(),
-            idxFmt,
-            0,
-            m_Inputs->Indices.BufferSize());
+        renderPass.SetIndexBuffer(m_Indices->GetBuffer(), idxFmt, 0, m_Indices->GetSize());
     }
 
     return renderPass;

@@ -660,39 +660,35 @@ MLG_ASSERT_SIZE(CameraResource, 4)
 
 #define POINT_LIGHT_RESOURCE_FIELDS(X)                                                             \
     X(ResourceBundle::IndexType, NodeIndex, ResourceBundle::kInvalidIndex)                         \
-    X(Vec3f, Position, Vec3f{ 0.0f, 0.0f, 0.0f })                                                  \
-    X(RgbaColorf, Color, RgbaColorf{ 1.0f, 1.0f, 1.0f, 1.0f })
+    X(RgbColorf, Color, RgbColorf{ 1.0f, 1.0f, 1.0f })
 
 struct PointLightResource final
 {
     POINT_LIGHT_RESOURCE_FIELDS(MLG_DECLARE_FIELD)
 };
 static_assert(BinaryStruct<PointLightResource>);
-MLG_ASSERT_FIELD_COUNT(POINT_LIGHT_RESOURCE_FIELDS, 3);
+MLG_ASSERT_FIELD_COUNT(POINT_LIGHT_RESOURCE_FIELDS, 2);
 MLG_ASSERT_NO_PADDING(PointLightResource, POINT_LIGHT_RESOURCE_FIELDS);
 MLG_ASSERT_OFFSET(PointLightResource, NodeIndex, 0)
-MLG_ASSERT_OFFSET(PointLightResource, Position, 4)
-MLG_ASSERT_OFFSET(PointLightResource, Color, 16)
-MLG_ASSERT_SIZE(PointLightResource, 32)
+MLG_ASSERT_OFFSET(PointLightResource, Color, 4)
+MLG_ASSERT_SIZE(PointLightResource, 16)
 
 /// DirectionalLightResource
 
 #define DIRECTIONAL_LIGHT_RESOURCE_FIELDS(X)                                                       \
     X(ResourceBundle::IndexType, NodeIndex, ResourceBundle::kInvalidIndex)                         \
-    X(Vec3f, Direction, Vec3f{ 0.0f, -1.0f, 0.0f })                                                \
-    X(RgbaColorf, Color, RgbaColorf{ 1.0f, 1.0f, 1.0f, 1.0f })
+    X(RgbColorf, Color, RgbColorf{ 1.0f, 1.0f, 1.0f })
 
 struct DirectionalLightResource final
 {
     DIRECTIONAL_LIGHT_RESOURCE_FIELDS(MLG_DECLARE_FIELD)
 };
 static_assert(BinaryStruct<DirectionalLightResource>);
-MLG_ASSERT_FIELD_COUNT(DIRECTIONAL_LIGHT_RESOURCE_FIELDS, 3);
+MLG_ASSERT_FIELD_COUNT(DIRECTIONAL_LIGHT_RESOURCE_FIELDS, 2);
 MLG_ASSERT_NO_PADDING(DirectionalLightResource, DIRECTIONAL_LIGHT_RESOURCE_FIELDS);
 MLG_ASSERT_OFFSET(DirectionalLightResource, NodeIndex, 0)
-MLG_ASSERT_OFFSET(DirectionalLightResource, Direction, 4)
-MLG_ASSERT_OFFSET(DirectionalLightResource, Color, 16)
-MLG_ASSERT_SIZE(DirectionalLightResource, 32)
+MLG_ASSERT_OFFSET(DirectionalLightResource, Color, 4)
+MLG_ASSERT_SIZE(DirectionalLightResource, 16)
 
 /// SceneNodeResource
 

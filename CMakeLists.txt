@@ -419,6 +419,7 @@ set(MLGLIB_SOURCES
 
 set(MLGLIB_HEADERS
   src/AssertHelper.h
+  src/BindGroup.h
   src/BoundingVolumes.h
   src/Containers.h
   src/CoopTask.h

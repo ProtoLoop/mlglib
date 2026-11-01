@@ -1,58 +1,98 @@
 struct WorldTransform
 {
-    xform : mat4x4<f32>,
-};
+    xform: mat4x4<f32>,
+}
 
 struct ClipSpaceTransform
 {
-    xform : mat4x4<f32>,
+    xform: mat4x4<f32>,
 }
 
 struct MeshInstanceParams
 {
-    transformIndex : u32,
-};
+    transformIndex: u32,
+}
 
 struct Material
 {
-    color : vec4<f32>,
-    metalness : f32,
-    roughness : f32,
-    // Align to 16 bytes.
-    pad0 : f32,
-    pad1 : f32,
-};
+    color: vec4<f32>,
+    metalness: f32,
+    roughness: f32,
+    // Align to 16 bytes due to Vec4.
+    pad0: f32,
+    pad1: f32,
+}
 
 struct Camera
 {
-    view      : mat4x4<f32>,
-    proj      : mat4x4<f32>,
-    viewProj  : mat4x4<f32>,
-};
+    view: mat4x4<f32>,
+    proj: mat4x4<f32>,
+    viewProj: mat4x4<f32>,
+}
 
-@group(0) @binding(0) var<storage, read> worldTransforms : array<WorldTransform>;
-@group(0) @binding(1) var<storage, read> clipSpaceTransforms : array<ClipSpaceTransform>;
-@group(0) @binding(2) var<storage, read> meshInstanceParams : array<MeshInstanceParams>;
-@group(0) @binding(3) var<uniform> camera : Camera;
+struct PointLight
+{
+    location: vec3<f32>,
 
-@group(1) @binding(0) var texture0 : texture_2d<f32>;
-@group(1) @binding(1) var textureSampler : sampler;
-@group(1) @binding(2) var<uniform> material : Material;
+    // Align to 16 bytes due to Vec3.
+    pad0: f32,
+
+    color: vec3<f32>,
+
+    // Align to 16 bytes due to Vec3.
+    pad1: f32,
+}
+
+struct PointLightBuffer
+{
+    count: u32,
+    lights: array<PointLight>,
+}
+
+struct DirectionalLight
+{
+    direction: vec3<f32>,
+
+    // Align to 16 bytes due to Vec3.
+    pad0: f32,
+
+    color: vec3<f32>,
+
+    // Align to 16 bytes due to Vec3.
+    pad1: f32,
+}
+
+struct DirectionalLightBuffer
+{
+    count: u32,
+    lights: array<DirectionalLight>,
+}
+
+@group(0) @binding(0) var<storage, read> worldTransforms: array<WorldTransform>;
+@group(0) @binding(1) var<storage, read> clipSpaceTransforms: array<ClipSpaceTransform>;
+@group(0) @binding(2) var<storage, read> meshInstanceParams: array<MeshInstanceParams>;
+@group(0) @binding(3) var<storage, read> pointLights: PointLightBuffer;
+@group(0) @binding(4) var<storage, read> directionalLights: DirectionalLightBuffer;
+@group(0) @binding(5) var<uniform> camera: Camera;
+
+@group(1) @binding(0) var texture0: texture_2d<f32>;
+@group(1) @binding(1) var textureSampler: sampler;
+@group(1) @binding(2) var<uniform> material: Material;
 
 struct VSInput
 {
     @location(0) inPosition: vec3<f32>,
     @location(1) inNormal: vec3<f32>,
     @location(2) inTexCoord: vec2<f32>,
-};
+}
 
 struct FSInput
 {
     @builtin(position) position: vec4<f32>,
     @location(0) fragNormal: vec3<f32>,
     @location(1) texCoord: vec2<f32>,
-    @location(2) @interpolate(flat) instanceIndex : u32,
-};
+    @location(2) @interpolate(flat) instanceIndex: u32,
+}
 
 @vertex
 fn vs_main(input: VSInput, @builtin(instance_index) instance_index: u32) -> FSInput
@@ -74,10 +114,16 @@ fn vs_main(input: VSInput, @builtin(instance_index) instance_index: u32) -> FSIn
 @fragment
 fn fs_main(input: FSInput) -> @location(0) vec4<f32>
 {
-    let lightDir = normalize(vec3<f32>(1.0, -1.0, 1.0));
+    var diffuse = vec3<f32>(0.0);
+
+    for(var i = 0u; i < directionalLights.count; i++)
+    {
+        let light = directionalLights.lights[i];
+        let diff = max(-dot(input.fragNormal, light.direction), 0.0);
+        diffuse += diff * material.color.rgb * light.color;
+    }
+
     let ambientFactor = 0.1;
-    let diff = max(-dot(input.fragNormal, lightDir), 0.0);
-    let diffuse = diff * material.color.rgb;
     let ambient = ambientFactor * material.color.rgb;
     let color = clamp(diffuse + ambient, vec3<f32>(0.0), vec3<f32>(1.0));
     let litColor = vec4<f32>(color, material.color.a);

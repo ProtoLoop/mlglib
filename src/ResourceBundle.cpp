@@ -921,24 +921,22 @@ CollectCameras(const std::span<const FlatNodeDef> flatNodeDefs)
     return cameras;
 }
 
-PointLightResource
+Result<PointLightResource>
 MakeLightResource(const PointLightDef& pointLightDef, const size_t nodeIndex)
 {
     return PointLightResource //
         {
             .NodeIndex = static_cast<IndexType>(nodeIndex),
-            .Position = pointLightDef.Position,
             .Color = pointLightDef.Color,
         };
 }
 
-DirectionalLightResource
+Result<DirectionalLightResource>
 MakeLightResource(const DirectionalLightDef& directionalLightDef, const size_t nodeIndex)
 {
     return DirectionalLightResource //
         {
             .NodeIndex = static_cast<IndexType>(nodeIndex),
-            .Direction = directionalLightDef.Direction,
             .Color = directionalLightDef.Color,
         };
 }
@@ -989,7 +987,10 @@ CollectLights(const std::span<const FlatNodeDef> flatNodeDefs)
                 {
                     const DefType& lightDef = std::get<DefType>(*optLight);
 
-                    lights.push_back(MakeLightResource(lightDef, nodeIndex));
+                    const auto lightResult = MakeLightResource(lightDef, nodeIndex);
+                    MLG_CHECK(lightResult);
+
+                    lights.push_back(std::move(*lightResult));
                 }
 
                 return Result<>::Ok;

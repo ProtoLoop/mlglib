@@ -1,3 +1,5 @@
+#define MLG_LOGGER_NAME "SCEN"
+
 #include "Scene.h"
 
 #include "Containers.h"
@@ -178,15 +180,29 @@ CalculateStringStorage(const ResourceBundle& resourceBundle)
 Result<BoundedVector<SceneNode>>
 CollectNodes(const ResourceBundle& resourceBundle, BoundedVector<char>& stringStorage)
 {
+    MLG_INFO("Collecting scene nodes...");
+
     const std::span nodeRsrcs = resourceBundle.GetResources<SceneNodeResource>();
 
     const bool haveCameras = !resourceBundle.GetResources<CameraResource>().empty();
+    const bool haveDirectionalLights =
+        !resourceBundle.GetResources<DirectionalLightResource>().empty();
 
     size_t nodeCount = nodeRsrcs.size();
     if(!haveCameras)
     {
+        MLG_INFO("No cameras found, reserving space for a default camera node.");
         // If there are no cameras, we reserve capacity for adding a default camera node.
         // The node will be added later.
+        nodeCount += 1;
+    }
+
+    if(!haveDirectionalLights)
+    {
+        MLG_INFO(
+            "No directional lights found, reserving space for a default directional light node.");
+        // If there are no directional lights, we reserve capacity for adding a default directional
+        // light node. The node will be added later.
         nodeCount += 1;
     }
 
@@ -226,12 +242,16 @@ CollectNodes(const ResourceBundle& resourceBundle, BoundedVector<char>& stringSt
         }
     }
 
+    MLG_INFO("Collected scene nodes: {}", nodes.size());
+
     return nodes;
 }
 
 Result<BoundedVector<Mesh>>
 CollectMeshes(const ResourceBundle& resourceBundle)
 {
+    MLG_INFO("Collecting meshes...");
+
     const std::span<const MeshResource> meshRsrcs = resourceBundle.GetResources<MeshResource>();
     BoundedVector<Mesh> meshes(meshRsrcs.size());
 
@@ -249,6 +269,8 @@ CollectMeshes(const ResourceBundle& resourceBundle)
         meshes.emplace_back(params);
     }
 
+    MLG_INFO("Collected meshes: {}", meshes.size());
+
     return meshes;
 }
 
@@ -261,6 +283,8 @@ CollectModelNodes(const ResourceBundle& resourceBundle,
         std::numeric_limits<uint32_t>::max() > std::vector<MeshInstance>().max_size()
         ? std::vector<MeshInstance>().max_size()
         : static_cast<size_t>(std::numeric_limits<uint32_t>::max());
+
+    MLG_INFO("Collecting model nodes...");
 
     const std::span modelRsrcs = resourceBundle.GetResources<ModelResource>();
     const std::span modelInstanceRsrcs = resourceBundle.GetResources<ModelInstanceResource>();
@@ -290,6 +314,8 @@ CollectModelNodes(const ResourceBundle& resourceBundle,
         meshInstanceIndex += modelRsrc.MeshCount;
     }
 
+    MLG_INFO("Collected model nodes: {}", modelNodes.size());
+
     return modelNodes;
 }
 
@@ -298,6 +324,8 @@ CollectPhysicsNodes(const WorldIdentifier worldId,
     const ResourceBundle& resourceBundle,
     const std::span<SceneNode> nodes)
 {
+    MLG_INFO("Collecting physics nodes...");
+
     const std::span rigidBodies = resourceBundle.GetResources<RigidBodyResource>();
     BoundedVector<PhysicsNode> physicsNodes(rigidBodies.size());
 
@@ -319,12 +347,58 @@ CollectPhysicsNodes(const WorldIdentifier worldId,
         physicsNodes.emplace_back(sceneNode, *bodyId);
     }
 
+    MLG_INFO("Collected physics nodes: {}", physicsNodes.size());
+
     return physicsNodes;
+}
+
+Result<BoundedVector<DirectionalLightNode>>
+CollectDirectionalLights(const ResourceBundle& resourceBundle, const std::span<SceneNode> nodes)
+{
+    MLG_INFO("Collecting directional light nodes...");
+
+    const std::span lights = resourceBundle.GetResources<DirectionalLightResource>();
+
+    BoundedVector<DirectionalLightNode> lightNodes(lights.size());
+
+    for(const DirectionalLightResource& light : lights)
+    {
+        SceneNode& sceneNode = nodes[light.NodeIndex];
+
+        lightNodes.emplace_back(sceneNode, light.Color);
+    }
+
+    MLG_INFO("Collected directional light nodes: {}", lightNodes.size());
+
+    return lightNodes;
+}
+
+Result<BoundedVector<PointLightNode>>
+CollectPointLights(const ResourceBundle& resourceBundle, const std::span<SceneNode> nodes)
+{
+    MLG_INFO("Collecting point light nodes...");
+
+    const std::span lights = resourceBundle.GetResources<PointLightResource>();
+
+    BoundedVector<PointLightNode> lightNodes(lights.size());
+
+    for(const PointLightResource& light : lights)
+    {
+        SceneNode& sceneNode = nodes[light.NodeIndex];
+
+        lightNodes.emplace_back(sceneNode, light.Color);
+    }
+
+    MLG_INFO("Collected point light nodes: {}", lightNodes.size());
+
+    return lightNodes;
 }
 
 Result<BoundedVector<CameraNode>>
 CollectCameraNodes(const ResourceBundle& resourceBundle, const std::span<SceneNode> nodes)
 {
+    MLG_INFO("Collecting camera nodes...");
+
     const std::span cameras = resourceBundle.GetResources<CameraResource>();
 
     BoundedVector<CameraNode> cameraNodes(cameras.size());
@@ -335,6 +409,8 @@ CollectCameraNodes(const ResourceBundle& resourceBundle, const std::span<SceneNo
 
         cameraNodes.emplace_back(sceneNode);
     }
+
+    MLG_INFO("Collected camera nodes: {}", cameraNodes.size());
 
     return cameraNodes;
 }
@@ -404,6 +480,37 @@ Scene::Create(const ResourceBundle& resourceBundle)
     auto physicsNodes = CollectPhysicsNodes(*worldIdentifierResult, resourceBundle, *sceneNodes);
     MLG_CHECK(physicsNodes, "Failed to collect physics nodes");
 
+    auto pointLightNodesResult = CollectPointLights(resourceBundle, *sceneNodes);
+    MLG_CHECK(pointLightNodesResult, "Failed to collect point light nodes");
+
+    auto directionalLightNodesResult = CollectDirectionalLights(resourceBundle, *sceneNodes);
+    MLG_CHECK(directionalLightNodesResult, "Failed to collect directional light nodes");
+
+    BoundedVector<DirectionalLightNode> directionalLightNodes =
+        std::move(*directionalLightNodesResult);
+    // If there are no directional light nodes, add a default directional light node.
+    if(directionalLightNodes.empty())
+    {
+        MLG_INFO("No directional lights found, adding a default directional light node.");
+
+        MLG_ASSERT(sceneNodes->capacity() > sceneNodes->size(),
+            "Insufficient capacity to add default directional light node");
+
+        directionalLightNodes = BoundedVector<DirectionalLightNode>(1);
+
+        SceneNode& newNode =
+            sceneNodes->emplace_back(DirectionalLightNode::kDefaultDirectionalLightName,
+                TrTransformf{});
+        const Radiansf defaultYaw = Radiansf::FromDegrees(45.0f);
+        const Radiansf defaultPitch = Radiansf::FromDegrees(45.0f);
+        const UnitQuatf defaultRotation =
+            UnitQuatf{ defaultYaw, Vec3f::YAXIS() } * UnitQuatf{ defaultPitch, Vec3f::XAXIS() };
+        newNode.SetRotation(defaultRotation);
+
+        const RgbColorf defaultColor{ 1.0f, 1.0f, 1.0f };
+        directionalLightNodes.emplace_back(newNode, defaultColor);
+    }
+
     auto cameraNodesResult = CollectCameraNodes(resourceBundle, *sceneNodes);
     MLG_CHECK(cameraNodesResult, "Failed to collect camera nodes");
 
@@ -412,6 +519,8 @@ Scene::Create(const ResourceBundle& resourceBundle)
     // If there are no camera nodes, add a default camera node.
     if(cameraNodes.empty())
     {
+        MLG_INFO("No camera nodes found, adding a default camera node.");
+
         MLG_ASSERT(sceneNodes->capacity() > sceneNodes->size(),
             "Insufficient capacity to add default camera node");
 
@@ -429,6 +538,8 @@ Scene::Create(const ResourceBundle& resourceBundle)
         std::move(*physicsNodes),
         std::move(*modelNodes),
         std::move(cameraNodes),
+        std::move(*pointLightNodesResult),
+        std::move(directionalLightNodes),
         std::move(*meshes),
         *worldIdentifierResult));
 }
@@ -438,6 +549,8 @@ Scene::Scene(BoundedVector<SceneNode>&& nodes,
     BoundedVector<PhysicsNode>&& physicsNodes,
     BoundedVector<ModelNode>&& modelNodes,
     BoundedVector<CameraNode>&& cameraNodes,
+    BoundedVector<PointLightNode>&& pointLightNodes,
+    BoundedVector<DirectionalLightNode>&& directionalLightNodes,
     BoundedVector<Mesh>&& meshes,
     const WorldIdentifier worldId)
     : m_Nodes(std::move(nodes)),
@@ -445,6 +558,8 @@ Scene::Scene(BoundedVector<SceneNode>&& nodes,
       m_PhysicsNodes(std::move(physicsNodes)),
       m_ModelNodes(std::move(modelNodes)),
       m_CameraNodes(std::move(cameraNodes)),
+      m_PointLightNodes(std::move(pointLightNodes)),
+      m_DirectionalLightNodes(std::move(directionalLightNodes)),
       m_Meshes(std::move(meshes)),
       m_WorldId(worldId)
 {

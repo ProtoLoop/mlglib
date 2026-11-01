@@ -98,7 +98,7 @@ public:
         return *this;
     }
 
-    const wgpu::Texture& Get() const { return m_Texture; }
+    const wgpu::Texture& GetTexture() const { return m_Texture; }
 
     const wgpu::Texture* operator->() const { return &m_Texture; }
 
@@ -122,19 +122,65 @@ private:
 using GpuRenderTarget = GpuTextureTarget<struct RenderTarget>;
 using GpuDepthTarget = GpuTextureTarget<struct DepthTarget>;
 
-/// Identifies the intended usage of a GpuBuffer.
-enum class GpuBufferUsage
+template<typename T>
+class GpuSimpleBuffer
 {
-    Vertex,
-    Index,
-    Indirect,
-    Uniform,
-    Storage
+    static constexpr size_t GetMinSize();
+
+public:
+    static constexpr size_t min_size = GetMinSize();
+
+    GpuSimpleBuffer() = delete;
+    ~GpuSimpleBuffer() = default;
+    GpuSimpleBuffer(const GpuSimpleBuffer&) = default;
+    GpuSimpleBuffer& operator=(const GpuSimpleBuffer&) = default;
+
+    // Because GpuBuffer guarantess validity of the underlying buffer we must
+    // not allow resource stealing.  Therefore move ctor and assignment delegate
+    // to the copy ctor and assignment operator.
+
+    GpuSimpleBuffer(GpuSimpleBuffer&& other) noexcept
+        : GpuSimpleBuffer(static_cast<const GpuSimpleBuffer&>(other))
+    {
+    }
+    GpuSimpleBuffer& operator=(GpuSimpleBuffer&& other) noexcept
+    {
+        return *this = static_cast<const GpuSimpleBuffer&>(other);
+    }
+
+    static Result<GpuSimpleBuffer<T>> Create(wgpu::Buffer buffer)
+    {
+        MLG_CHECK(buffer, "Invalid GPU buffer");
+        return GpuSimpleBuffer<T>(std::move(buffer));
+    }
+
+    const wgpu::Buffer& GetBuffer() const { return m_Buffer; }
+
+    size_t GetSize() const { return static_cast<size_t>(m_Buffer.GetSize()); }
+
+    bool IsValid() const { return m_Buffer.Get(); }
+
+    explicit operator wgpu::Buffer() const { return m_Buffer; }
+
+    friend bool operator==(const GpuSimpleBuffer& a, const GpuSimpleBuffer& b)
+    {
+        return a.m_Buffer.Get() == b.m_Buffer.Get();
+    }
+
+    friend bool operator!=(const GpuSimpleBuffer& a, const GpuSimpleBuffer& b) { return !(a == b); }
+
+private:
+    explicit GpuSimpleBuffer(wgpu::Buffer buffer)
+        : m_Buffer(std::move(buffer))
+    {
+    }
+
+    wgpu::Buffer m_Buffer;
 };
 
 /// A strongly-typed GPU buffer that wraps a wgpu::Buffer, guarantees
 /// its validity, and provides type-safe access to its contents.
-template<typename T, GpuBufferUsage BufferUsage>
+template<typename T, wgpu::BufferUsage BufferUsage>
 class GpuBuffer
 {
     static_assert(std::is_trivially_copyable_v<T>,
@@ -144,6 +190,8 @@ class GpuBuffer
 
 public:
     using value_type = T;
+    static constexpr size_t min_size = sizeof(T);
+    static constexpr wgpu::BufferUsage usage = BufferUsage;
 
     GpuBuffer() = delete;
     ~GpuBuffer() = default;
@@ -160,11 +208,7 @@ public:
     }
     GpuBuffer& operator=(GpuBuffer&& other) noexcept
     {
-        if(this != &other)
-        {
-            return *this = static_cast<const GpuBuffer&>(other);
-        }
-        return *this;
+        return *this = static_cast<const GpuBuffer&>(other);
     }
 
     static Result<GpuBuffer> Create(wgpu::Device gpuDevice, wgpu::Buffer buffer)
@@ -175,23 +219,20 @@ public:
         return GpuBuffer(std::move(gpuDevice), std::move(buffer));
     }
 
-    const wgpu::Buffer& GetGpuBuffer() const { return m_GpuBuffer; }
+    const wgpu::Buffer& GetBuffer() const { return m_Buffer; }
 
-    size_t BufferSize() const { return static_cast<size_t>(m_GpuBuffer.GetSize()); }
+    size_t GetSize() const { return static_cast<size_t>(m_Buffer.GetSize()); }
 
-    size_t Count() const { return BufferSize() / sizeof(T); }
-
-    // Stores a single value at the given index.
-    void Store(size_t index, const T& value) { Store(index, std::span<const T>(&value, 1)); }
+    size_t Count() const { return GetSize() / sizeof(T); }
 
     // Stores an array of values starting at the given index.
     void Store(size_t index, std::span<const T> values)
     {
         const size_t offset = index * sizeof(T);
 
-        MLG_ASSERT((offset + (values.size() * sizeof(T))) <= BufferSize(), "Index out of bounds");
+        MLG_ASSERT((offset + (values.size() * sizeof(T))) <= GetSize(), "Index out of bounds");
 
-        m_Device.GetQueue().WriteBuffer(GetGpuBuffer(),
+        m_Device.GetQueue().WriteBuffer(GetBuffer(),
             offset,
             values.data(),
             values.size() * sizeof(T));
@@ -200,58 +241,73 @@ public:
     // Stores an array of values starting at the zero index.
     void Store(std::span<const T> values) { Store(0, values); }
 
+    bool IsValid() const { return m_Device && m_Buffer; }
+
+    explicit operator wgpu::Buffer() const { return m_Buffer; }
+
     friend bool operator==(const GpuBuffer& a, const GpuBuffer& b)
     {
-        return a.m_Device.Get() == b.m_Device.Get() && a.m_GpuBuffer.Get() == b.m_GpuBuffer.Get();
+        return a.m_Device.Get() == b.m_Device.Get() && a.m_Buffer.Get() == b.m_Buffer.Get();
     }
+
+    friend bool operator!=(const GpuBuffer& a, const GpuBuffer& b) { return !(a == b); }
 
 private:
     GpuBuffer(wgpu::Device gpuDevice, wgpu::Buffer buffer)
         : m_Device(std::move(gpuDevice)),
-          m_GpuBuffer(std::move(buffer))
+          m_Buffer(std::move(buffer))
     {
     }
 
     wgpu::Device m_Device{ nullptr };
-    wgpu::Buffer m_GpuBuffer{ nullptr };
+    wgpu::Buffer m_Buffer{ nullptr };
 };
 
-/// Type traits to determine if a type is a GpuBuffer of a specific buffer type.
-#define MLG_DEFINE_GPU_BUFFER_TRAITS(typeName, bufferUsage)                                        \
-    template<typename T>                                                                           \
-    struct is_gpu_##typeName##_buffer_type : std::false_type                                       \
-    {                                                                                              \
-    };                                                                                             \
-    template<typename T>                                                                           \
-    struct is_gpu_##typeName##                                                                     \
-        _buffer_type<GpuBuffer<T, GpuBufferUsage::bufferUsage>> : std::true_type                   \
-    {                                                                                              \
-    };                                                                                             \
-    template<typename T>                                                                           \
-    inline constexpr bool is_gpu_##typeName##_buffer_type_v =                                      \
-        is_gpu_##typeName##_buffer_type<T>::value;
-
-MLG_DEFINE_GPU_BUFFER_TRAITS(vertex, Vertex)
-MLG_DEFINE_GPU_BUFFER_TRAITS(index, Index)
-MLG_DEFINE_GPU_BUFFER_TRAITS(indirect, Indirect)
-MLG_DEFINE_GPU_BUFFER_TRAITS(uniform, Uniform)
-MLG_DEFINE_GPU_BUFFER_TRAITS(storage, Storage)
-
 // Strongly-typed GPU storage buffer classes.
-using GpuVertexBuffer = GpuBuffer<Vertex, GpuBufferUsage::Vertex>;
-using GpuIndexBuffer = GpuBuffer<VertexIndex, GpuBufferUsage::Index>;
-using GpuDrawIndirectBuffer =
-    GpuBuffer<ShaderInterop::DrawIndirectParams, GpuBufferUsage::Indirect>;
-using GpuWorldTransformBuffer = GpuBuffer<ShaderInterop::WorldTransform, GpuBufferUsage::Storage>;
-using GpuClipSpaceBuffer = GpuBuffer<ShaderInterop::ClipSpaceTransform, GpuBufferUsage::Storage>;
-using GpuMeshInstanceParamsBuffer =
-    GpuBuffer<ShaderInterop::MeshInstanceParams, GpuBufferUsage::Storage>;
-using GpuCameraParamsBuffer = GpuBuffer<ShaderInterop::CameraParams, GpuBufferUsage::Uniform>;
-using GpuMaterialConstantsBuffer =
-    GpuBuffer<ShaderInterop::MaterialConstants, GpuBufferUsage::Uniform>;
+using GpuVertexBuffer = GpuBuffer<Vertex, wgpu::BufferUsage::Vertex | wgpu::BufferUsage::CopyDst>;
+using GpuIndexBuffer =
+    GpuBuffer<VertexIndex, wgpu::BufferUsage::Index | wgpu::BufferUsage::CopyDst>;
+using GpuDrawIndirectBuffer = GpuBuffer<ShaderInterop::DrawIndirectParams,
+    wgpu::BufferUsage::Indirect | wgpu::BufferUsage::CopyDst>;
+using GpuWorldTransformBuffer = GpuBuffer<ShaderInterop::WorldTransform,
+    wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst>;
+using GpuClipSpaceTransformBuffer = GpuBuffer<ShaderInterop::ClipSpaceTransform,
+    wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst>;
+using GpuMeshInstanceParamsBuffer = GpuBuffer<ShaderInterop::MeshInstanceParams,
+    wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst>;
+using GpuCameraParamsBuffer =
+    GpuBuffer<ShaderInterop::CameraParams, wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst>;
+using GpuMaterialConstantsBuffer = GpuBuffer<ShaderInterop::MaterialConstants,
+    wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst>;
+
+/// This gives strongly-typed GPU buffers for point and directional lights.
+/// Because light buffers have a header we can't simply use GpuBuffer because
+/// is expects a tightly-packed array of elements without any headers.
+using GpuPointLightBuffer = GpuSimpleBuffer<struct PointLightTag>;
+using GpuDirectionalLightBuffer = GpuSimpleBuffer<struct DirectionalLightTag>;
+
+template<>
+constexpr size_t
+GpuSimpleBuffer<struct PointLightTag>::GetMinSize()
+{
+    return sizeof(ShaderInterop::PointLightBufferHeader);
+}
+
+template<>
+constexpr size_t
+GpuSimpleBuffer<struct DirectionalLightTag>::GetMinSize()
+{
+    return sizeof(ShaderInterop::DirectionalLightBufferHeader);
+}
 
 inline bool
 operator==(const wgpu::Texture& a, const wgpu::Texture& b)
+{
+    return a.Get() == b.Get();
+}
+
+inline bool
+operator==(const wgpu::Sampler& a, const wgpu::Sampler& b)
 {
     return a.Get() == b.Get();
 }

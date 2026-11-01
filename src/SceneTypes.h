@@ -165,14 +165,12 @@ struct CameraDef final
 
 struct DirectionalLightDef final
 {
-    Vec3f Direction{ 0, -1, 0 };
-    RgbaColorf Color{ 1, 1, 1, 1 };
+    RgbColorf Color{ 1, 1, 1 };
 };
 
 struct PointLightDef final
 {
-    Vec3f Position{ 0 };
-    RgbaColorf Color{ 1, 1, 1, 1 };
+    RgbColorf Color{ 1, 1, 1 };
 };
 
 using LightDef = std::variant<DirectionalLightDef, PointLightDef>;
@@ -473,6 +471,108 @@ private:
     std::span<const Mesh> m_Meshes;
     // Index of the first mesh instance in the scene's mesh instance collection
     uint32_t m_FirstMeshInstanceIndex{ 0 };
+};
+
+class PointLightNode
+{
+public:
+    PointLightNode(SceneNode& sceneNode, const RgbColorf& color);
+
+    PointLightNode() = delete;
+    ~PointLightNode() = default;
+    PointLightNode(const PointLightNode&) = delete;
+    PointLightNode& operator=(const PointLightNode&) = delete;
+    PointLightNode(PointLightNode&&) = delete;
+    PointLightNode& operator=(PointLightNode&&) = delete;
+
+    std::string_view GetName() const { return m_SceneNode->GetName(); }
+
+    /// Returns the scene node associated with this point light.
+    const SceneNode& GetSceneNode() const { return *m_SceneNode; }
+
+    /// Returns the world space transformation matrix.
+    /// This includes all parent transforms.
+    const Mat44f& GetWsMatrix() const { return m_SceneNode->GetWsMatrix(); }
+
+    /// Returns the local space transformation.
+    /// This does not include any parent transforms.
+    TrsTransformf GetTransform() const { return m_SceneNode->GetTransform(); }
+
+    /// Sets the location of the light within its local transform.
+    void SetLocation(const Vec3f& location) { m_SceneNode->SetLocation(location); }
+
+    /// Returns the location of the light within its local transform.
+    const Vec3f& GetLocation() const { return m_SceneNode->GetLocation(); }
+
+    /// Sets the rotation of the light within its local transform.
+    void SetRotation(const UnitQuatf& rotation) { m_SceneNode->SetRotation(rotation); }
+
+    /// Returns the rotation of the light within its local transform.
+    const UnitQuatf& GetRotation() const { return m_SceneNode->GetRotation(); }
+
+    /// Returns the color of the light.
+    const RgbColorf& GetColor() const { return m_Color; }
+
+private:
+    friend class Scene;
+
+    SceneNode* m_SceneNode{ nullptr };
+    RgbColorf m_Color{ 1.0f, 1.0f, 1.0f };
+};
+
+class DirectionalLightNode
+{
+public:
+    static constexpr std::string_view kDefaultDirectionalLightName{
+        "!!!!DefaultDirectionalLight****"
+    };
+
+    DirectionalLightNode(SceneNode& sceneNode, const RgbColorf& color);
+
+    DirectionalLightNode() = delete;
+    ~DirectionalLightNode() = default;
+    DirectionalLightNode(const DirectionalLightNode&) = delete;
+    DirectionalLightNode& operator=(const DirectionalLightNode&) = delete;
+    DirectionalLightNode(DirectionalLightNode&&) = delete;
+    DirectionalLightNode& operator=(DirectionalLightNode&&) = delete;
+
+    std::string_view GetName() const { return m_SceneNode->GetName(); }
+
+    /// Returns the scene node associated with this directional light.
+    const SceneNode& GetSceneNode() const { return *m_SceneNode; }
+
+    /// Returns the world space transformation matrix.
+    /// This includes all parent transforms.
+    const Mat44f& GetWsMatrix() const { return m_SceneNode->GetWsMatrix(); }
+
+    /// Returns the local space transformation.
+    /// This does not include any parent transforms.
+    TrsTransformf GetTransform() const { return m_SceneNode->GetTransform(); }
+
+    /// Sets the location of the light within its local transform.
+    void SetLocation(const Vec3f& location) { m_SceneNode->SetLocation(location); }
+
+    /// Returns the location of the light within its local transform.
+    const Vec3f& GetLocation() const { return m_SceneNode->GetLocation(); }
+
+    /// Sets the rotation of the light within its local transform.
+    void SetRotation(const UnitQuatf& rotation) { m_SceneNode->SetRotation(rotation); }
+
+    /// Returns the rotation of the light within its local transform.
+    const UnitQuatf& GetRotation() const { return m_SceneNode->GetRotation(); }
+
+    /// Returns the direction of the light in world space.
+    /// The direction is the forward direction of the (+Z axis) in world space.
+     Vec3f GetDirection() const;
+
+    /// Returns the color of the light.
+    const RgbColorf& GetColor() const { return m_Color; }
+
+private:
+    friend class Scene;
+
+    SceneNode* m_SceneNode{ nullptr };
+    RgbColorf m_Color{ 1.0f, 1.0f, 1.0f };
 };
 
 /// Represents a camera node within the scene graph.

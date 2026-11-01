@@ -1,11 +1,13 @@
 #pragma once
 
+#include "BindGroup.h"
 #include "CoopTask.h"
 #include "GpuTypes.h"
 #include "ShaderFetcher.h"
 
 #include <memory>
 #include <optional>
+#include <webgpu/webgpu_cpp.h>
 
 class FileFetcher;
 class GpuHelper;
@@ -37,32 +39,46 @@ class GpuColorPass
 public:
     class CreateTask;
 
-    struct Inputs
-    {
-        GpuVertexBuffer Vertices;
-        GpuIndexBuffer Indices;
-        GpuWorldTransformBuffer WorldTransforms;
-        GpuClipSpaceBuffer ClipSpaceTransforms;
-        GpuMeshInstanceParamsBuffer MeshInstanceParams;
-        GpuCameraParamsBuffer CameraParams;
+    using WorldTransformBufferBinding = BufferBinding<GpuWorldTransformBuffer,
+        wgpu::BufferBindingType::ReadOnlyStorage,
+        wgpu::ShaderStage::Vertex>;
 
-        Result<> Validate() const // NOLINT(readability-convert-member-functions-to-static)
-        {
-            return Result<>::Ok;
-        }
+    using ClipSpaceBufferBinding = BufferBinding<GpuClipSpaceTransformBuffer,
+        wgpu::BufferBindingType::ReadOnlyStorage,
+        wgpu::ShaderStage::Vertex>;
 
-        friend bool operator==(const Inputs& a, const Inputs& b)
-        {
-            return a.Vertices == b.Vertices
-                && a.Indices == b.Indices
-                && a.WorldTransforms == b.WorldTransforms
-                && a.ClipSpaceTransforms == b.ClipSpaceTransforms
-                && a.MeshInstanceParams == b.MeshInstanceParams
-                && a.CameraParams == b.CameraParams;
-        }
-    };
+    using MeshInstanceParamsBufferBinding = BufferBinding<GpuMeshInstanceParamsBuffer,
+        wgpu::BufferBindingType::ReadOnlyStorage,
+        wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment>;
 
-    struct Outputs
+    using PointLightBufferBinding = BufferBinding<GpuPointLightBuffer,
+        wgpu::BufferBindingType::ReadOnlyStorage,
+        wgpu::ShaderStage::Fragment>;
+
+    using DirectionalLightBufferBinding = BufferBinding<GpuDirectionalLightBuffer,
+        wgpu::BufferBindingType::ReadOnlyStorage,
+        wgpu::ShaderStage::Fragment>;
+
+    using CameraParamsBufferBinding = BufferBinding<GpuCameraParamsBuffer,
+        wgpu::BufferBindingType::Uniform,
+        wgpu::ShaderStage::Vertex>;
+
+    using MaterialConstantsBufferBinding = BufferBinding<GpuMaterialConstantsBuffer,
+        wgpu::BufferBindingType::Uniform,
+        wgpu::ShaderStage::Fragment>;
+
+    using BindGroup0 = BindGroup<WorldTransformBufferBinding,
+        ClipSpaceBufferBinding,
+        MeshInstanceParamsBufferBinding,
+        PointLightBufferBinding,
+        DirectionalLightBufferBinding,
+        CameraParamsBufferBinding>;
+
+    using BindGroup1 = BindGroup<TextureBinding<wgpu::ShaderStage::Fragment>,
+        SamplerBinding<wgpu::ShaderStage::Fragment>,
+        MaterialConstantsBufferBinding>;
+
+    struct RenderAttachments
     {
         GpuRenderTarget RenderTarget;
         GpuDepthTarget DepthBuffer;
@@ -72,7 +88,7 @@ public:
             return Result<>::Ok;
         }
 
-        friend bool operator==(const Outputs& a, const Outputs& b) = default;
+        friend bool operator==(const RenderAttachments& a, const RenderAttachments& b) = default;
     };
 
     GpuColorPass() = delete;
@@ -82,23 +98,24 @@ public:
     GpuColorPass(GpuColorPass&&) = delete;
     GpuColorPass& operator=(GpuColorPass&&) = delete;
 
-    Result<> SetInputs(const Inputs& inputs);
-    Result<> SetOutputs(const Outputs& outputs);
+    Result<> SetGeometryBuffers(const GpuVertexBuffer& vertices, const GpuIndexBuffer& indices);
+    Result<> SetBindGroup(const BindGroup0& bg0);
+    Result<> SetRenderAttachments(const RenderAttachments& attachments);
 
-    /// Executes the pass using the supplied inputs and outputs.
+    /// Executes the pass by rendering the meshses to the render attachments.
     /// This variant of Execute creates a command encoder that's owned and
     /// submitted to the GPU before returning.
     /// Note that the meshes span is non-const to allow sorting for optimal rendering order.
     Result<> Execute(std::span<MeshInstance> meshes,
         const std::span<const GpuMaterialProperties> materialProperties);
 
-    /// Executes the pass using the supplied inputs and outputs.
+    /// Executes the pass by rendering the meshses to the render attachments.
     /// This variant of Execute uses the provided command encoder.
     /// The caller is responsible for submitting the command encoder to the GPU.
     /// Note that the meshes span is non-const to allow sorting for optimal rendering order.
-    Result<> Execute(const wgpu::CommandEncoder& cmdEncoder,
-        std::span<MeshInstance> meshes,
-        const std::span<const GpuMaterialProperties> materialProperties);
+    Result<> Execute(std::span<MeshInstance> meshes,
+        const std::span<const GpuMaterialProperties> materialProperties,
+        const wgpu::CommandEncoder& cmdEncoder);
 
     /// Creates a material bind group for the color pass.
     Result<wgpu::BindGroup> CreateMaterialBindGroup(const wgpu::Texture& texture,
@@ -106,47 +123,28 @@ public:
         const std::string_view name) const;
 
 private:
-    static constexpr const char* ShaderPath = "shaders/ColorShader.wgsl";
-    static constexpr const char* VertexEntry = "vs_main";
-    static constexpr const char* FragmentEntry = "fs_main";
-    static constexpr float kClearDepth = 1.0f;
-
     explicit GpuColorPass(const GpuHelper& gpuHelper,
-        wgpu::ShaderModule shader,
-        wgpu::BindGroupLayout inputsBindGroupLayout,
-        wgpu::BindGroupLayout materialBindGroupLayout,
-        wgpu::PipelineLayout pipelineLayout,
-        wgpu::Sampler defaultSampler)
-        : m_GpuHelper(&gpuHelper),
-          m_Shader(std::move(shader)),
-          m_InputsBindGroupLayout(std::move(inputsBindGroupLayout)),
-          m_MaterialBindGroupLayout(std::move(materialBindGroupLayout)),
-          m_PipelineLayout(std::move(pipelineLayout)),
-          m_DefaultSampler(std::move(defaultSampler))
-    {
-        MLG_ASSERT(m_Shader, "Shader module is not valid");
-        MLG_ASSERT(m_InputsBindGroupLayout, "Inputs bind group layout is not valid");
-        MLG_ASSERT(m_MaterialBindGroupLayout, "Material bind group layout is not valid");
-        MLG_ASSERT(m_PipelineLayout, "Pipeline layout is not valid");
-        MLG_ASSERT(m_DefaultSampler, "Default sampler is not valid");
-    }
+        wgpu::BindGroupLayout bg0Layout,
+        wgpu::BindGroupLayout bg1Layout,
+        wgpu::RenderPipeline opaquePipeline,
+        wgpu::RenderPipeline translucentPipeline,
+        wgpu::Sampler defaultSampler);
 
-    Result<> EnsurePipeline();
-    Result<> EnsureInputsBindGroup();
+    Result<> EnsureBindGroup0();
     Result<wgpu::RenderPassEncoder> CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder);
 
     const GpuHelper* m_GpuHelper{ nullptr };
 
-    std::optional<Inputs> m_Inputs;
-    std::optional<Outputs> m_Outputs;
+    std::optional<GpuVertexBuffer> m_Vertices;
+    std::optional<GpuIndexBuffer> m_Indices;
+    std::optional<BindGroup0> m_BindGroup0Params;
+    std::optional<RenderAttachments> m_RenderAttachments;
 
-    wgpu::ShaderModule m_Shader;
-    wgpu::BindGroupLayout m_InputsBindGroupLayout;
-    wgpu::BindGroupLayout m_MaterialBindGroupLayout;
-    wgpu::PipelineLayout m_PipelineLayout;
-    wgpu::BindGroup m_InputsBindGroup;
-    wgpu::RenderPipeline m_TranslucentPipeline;
+    wgpu::BindGroupLayout m_BindGroup0Layout;
+    wgpu::BindGroupLayout m_BindGroup1Layout;
+    wgpu::BindGroup m_BindGroup0;
     wgpu::RenderPipeline m_OpaquePipeline;
+    wgpu::RenderPipeline m_TranslucentPipeline;
 
     wgpu::Sampler m_DefaultSampler;
 };

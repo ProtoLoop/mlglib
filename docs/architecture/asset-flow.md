@@ -35,7 +35,9 @@ device.
 - `MaterialDef` describes surface properties and a texture path.
 - `ModelDef` groups meshes under a name.
 - Nodes describe transforms and hierarchy, refer to models by name, and can
-  include camera definitions. Physics definitions belong to root nodes.
+  include camera or light definitions. Physics definitions belong to root nodes.
+- `PointLightDef` and `DirectionalLightDef` hold RGB colors. The owning node's
+  transform supplies the point light's position or directional light's orientation.
 
 [`GltfLoader`](../../src/GltfLoader.cpp) produces these definitions from glTF.
 A glTF mesh becomes a `ModelDef`, and each primitive becomes a `MeshDef`.
@@ -53,7 +55,9 @@ packs geometry and resource records into one buffer, shares duplicate strings,
 texture paths, and materials, resolves model names to indices, computes bounds,
 and flattens the node hierarchy.
 
-The builder records cameras attached to nodes.
+The builder records cameras and lights attached to nodes. Point and directional
+lights have separate resource arrays. Each light record stores its color and
+owning node index, with spatial information kept in the node's transform.
 
 The bundle owns its buffer. Its accessors return read-only views that remain
 valid while the bundle exists. Intermediate definitions can be discarded after
@@ -63,13 +67,28 @@ building it.
 
 [`Level::CreateTask`](../../src/Level.cpp) accepts scene definitions, imports
 glTF, or loads cooked resource bundles. [`Scene`](../../src/Scene.cpp) creates
-runtime nodes, physics bodies, and cameras. If the bundle contains no cameras,
+runtime nodes, physics bodies, cameras, and lights. If the bundle contains no cameras,
 it adds a camera on a new root node with an identity transform. Cameras can be
 enumerated or looked up by their owning node’s name.
 
 Camera controllers modify local position and rotation directly.
 `Scene::Update()` synchronizes physics and updates world transforms.
 [`View`](../../src/View.cpp) renders using the scene’s first camera.
+
+Point and directional lights can be enumerated through `Scene`. Their runtime
+wrappers refer to the owning scene nodes. Point lights use the node's position,
+and directional lights use its world-space +Z axis. Changing a node's transform
+also affects its other attached components and descendants.
+
+If the bundle contains no directional lights, `Scene` adds a white directional
+light on a new root node with a default rotation. `View` uploads directional-light
+directions and colors to GPU storage each frame. The
+[`color shader`](../../src/shaders/ColorShader.wgsl) combines their diffuse
+contributions with a fixed ambient term.
+
+Point-light rendering is not implemented yet. Point lights are collected into
+the runtime scene, and `View` allocates and binds a GPU buffer for them, but it
+does not populate that buffer and the color shader does not evaluate them.
 
 The [Cook tool](../../tools/Cook/Cook.cpp) writes resource bundles and separate
 `.bc7.ktx2`, `.astc.ktx2`, and uncompressed `.rgba.ktx2` texture files with mipmaps.

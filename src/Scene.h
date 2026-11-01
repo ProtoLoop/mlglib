@@ -37,6 +37,17 @@ public:
     std::span<const CameraNode> GetAllCameraNodes() const { return m_CameraNodes; }
     std::span<CameraNode> GetAllCameraNodes() { return m_CameraNodes; }
 
+    /// Returns all point light nodes in the scene, in breadth-first order.
+    std::span<const PointLightNode> GetAllPointLights() const { return m_PointLightNodes; }
+    std::span<PointLightNode> GetAllPointLights() { return m_PointLightNodes; }
+
+    /// Returns all directional light nodes in the scene, in breadth-first order.
+    std::span<const DirectionalLightNode> GetAllDirectionalLights() const
+    {
+        return m_DirectionalLightNodes;
+    }
+    std::span<DirectionalLightNode> GetAllDirectionalLights() { return m_DirectionalLightNodes; }
+
     Result<CameraNode*> GetCameraNode(const std::string_view name);
 
     Result<const CameraNode*> GetCameraNode(const std::string_view name) const;
@@ -51,6 +62,8 @@ private:
         BoundedVector<PhysicsNode>&& physicsNodes,
         BoundedVector<ModelNode>&& modelNodes,
         BoundedVector<CameraNode>&& cameraNodes,
+        BoundedVector<PointLightNode>&& pointLightNodes,
+        BoundedVector<DirectionalLightNode>&& directionalLightNodes,
         BoundedVector<Mesh>&& meshes,
         const WorldIdentifier worldId);
 
@@ -66,6 +79,8 @@ private:
     BoundedVector<PhysicsNode> m_PhysicsNodes;
     BoundedVector<ModelNode> m_ModelNodes;
     BoundedVector<CameraNode> m_CameraNodes;
+    BoundedVector<PointLightNode> m_PointLightNodes;
+    BoundedVector<DirectionalLightNode> m_DirectionalLightNodes;
     BoundedVector<Mesh> m_Meshes;
     WorldIdentifier m_WorldId;
 };
