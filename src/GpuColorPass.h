@@ -1,6 +1,6 @@
 #pragma once
 
-#include "BindGroup.h"
+#include "BindGroupHelper.h"
 #include "CoopTask.h"
 #include "GpuTypes.h"
 #include "ShaderFetcher.h"
@@ -67,14 +67,14 @@ public:
         wgpu::BufferBindingType::Uniform,
         wgpu::ShaderStage::Fragment>;
 
-    using BindGroup0 = BindGroup<WorldTransformBufferBinding,
+    using BindGroup0 = BindGroupHelper<WorldTransformBufferBinding,
         ClipSpaceBufferBinding,
         MeshInstanceParamsBufferBinding,
         PointLightBufferBinding,
         DirectionalLightBufferBinding,
         CameraParamsBufferBinding>;
 
-    using BindGroup1 = BindGroup<TextureBinding<wgpu::ShaderStage::Fragment>,
+    using BindGroup1 = BindGroupHelper<TextureBinding<wgpu::ShaderStage::Fragment>,
         SamplerBinding<wgpu::ShaderStage::Fragment>,
         MaterialConstantsBufferBinding>;
 

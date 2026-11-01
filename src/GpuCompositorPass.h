@@ -1,6 +1,6 @@
 #pragma once
 
-#include "BindGroup.h"
+#include "BindGroupHelper.h"
 #include "CoopTask.h"
 #include "GpuTypes.h"
 #include "ShaderFetcher.h"
@@ -18,7 +18,7 @@ class GpuCompositorPass
 public:
     class CreateTask;
 
-    using BindGroup0 = BindGroup<TextureBinding<wgpu::ShaderStage::Fragment>,
+    using BindGroup0 = BindGroupHelper<TextureBinding<wgpu::ShaderStage::Fragment>,
         SamplerBinding<wgpu::ShaderStage::Fragment>>;
 
     GpuCompositorPass() = delete;

@@ -162,7 +162,7 @@ struct SamplerBinding
 /// Represents a GPU bind group composed of multiple bindings.
 /// The template parameter pack `Bindings` specifies the types of bindings included in the group.
 template<class... Bindings>
-class BindGroup
+class BindGroupHelper
 {
     static consteval auto MakeLayoutEntries()
     {
@@ -185,15 +185,15 @@ public:
     /// Layout entries used for constructing the bind group layout.
     static constexpr auto LayoutEntries = MakeLayoutEntries();
 
-    BindGroup() = delete;
+    BindGroupHelper() = delete;
 
     /// Creates a bind group with the specified GPU resources.
-    static Result<BindGroup> Create(Bindings::ResourceType... resources)
+    static Result<BindGroupHelper> Create(Bindings::ResourceType... resources)
     {
         BindingsTuple bindings(std::make_tuple(Bindings{ .Resource = std::move(resources) }...));
         MLG_CHECK(Validate(bindings), "Failed to create bind group - invalid resources");
 
-        return BindGroup(bindings);
+        return BindGroupHelper(bindings);
     }
 
     /// Returns the number of bindings in the bind group.
@@ -216,12 +216,12 @@ public:
             m_Bindings);
     }
 
-    friend bool operator==(const BindGroup& lhs, const BindGroup& rhs)
+    friend bool operator==(const BindGroupHelper& lhs, const BindGroupHelper& rhs)
     {
         return lhs.m_Bindings == rhs.m_Bindings;
     }
 
-    friend bool operator!=(const BindGroup& lhs, const BindGroup& rhs)
+    friend bool operator!=(const BindGroupHelper& lhs, const BindGroupHelper& rhs)
     {
         return !(lhs == rhs);
     }
@@ -229,7 +229,7 @@ public:
 private:
     using BindingsTuple = std::tuple<Bindings...>;
 
-    explicit BindGroup(BindingsTuple bindings)
+    explicit BindGroupHelper(BindingsTuple bindings)
         : m_Bindings(std::move(bindings)),
           m_BindGroupEntries(MakeBindGroupEntries())
     {

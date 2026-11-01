@@ -1,6 +1,6 @@
 #pragma once
 
-#include "BindGroup.h"
+#include "BindGroupHelper.h"
 #include "CoopTask.h"
 #include "GpuTypes.h"
 #include "Result.h"
@@ -30,7 +30,7 @@ public:
         wgpu::ShaderStage::Compute>;
 
     using BindGroup0 =
-        BindGroup<WorldTransformBufferBinding, ClipSpaceBufferBinding, CameraParamsBufferBinding>;
+        BindGroupHelper<WorldTransformBufferBinding, ClipSpaceBufferBinding, CameraParamsBufferBinding>;
 
     GpuTransformPass() = delete;
     ~GpuTransformPass() = default;
