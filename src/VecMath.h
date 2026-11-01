@@ -7,7 +7,6 @@
 #include <limits>
 #include <numbers>
 
-
 template<typename T>
 class Vec2;
 template<typename T>
@@ -694,7 +693,7 @@ public:
     static constexpr UnitQuat Identity() noexcept
     {
         UnitQuat result{};
-        result.m_Vec = Vec4<T>{ T{0}, T{0}, T{0}, T{1} };
+        result.m_Vec = Vec4<T>{ T{ 0 }, T{ 0 }, T{ 0 }, T{ 1 } };
         return result;
     }
 
@@ -723,6 +722,84 @@ public:
         m_Vec.y = axis.y * s;
         m_Vec.z = axis.z * s;
         m_Vec.w = ao2.Cos();
+    }
+
+    /// Aligns local +Z with direction and keeps local +Y as close to world +Y as possible.
+    /// When 1 - abs(normalized direction.y) <= 1e-6, instead keeps local +X
+    /// as close to world +X as possible. Switching preferences can cause a roll discontinuity.
+    /// Invalid directions or lengths <= 1e-6 trigger verification and return identity.
+    static UnitQuat FromZDirection(const Vec3<T>& direction)
+    {
+        constexpr T kMinLength = static_cast<T>(1e-6);
+        constexpr T kPoleTolerance = static_cast<T>(1e-6);
+        const T len = std::hypot(direction.x, direction.y, direction.z);
+
+        if(!MLG_VERIFY(std::isfinite(len) && len > kMinLength,
+               "Direction must have a finite length greater than 1e-6"))
+        {
+            return UnitQuat::Identity();
+        }
+
+        const Vec3<T> forward = direction / len;
+        Vec3<T> right{};
+        Vec3<T> up{};
+        if(T{ 1 } - std::abs(forward.y) > kPoleTolerance)
+        {
+            // Project world +Y onto the plane perpendicular to forward by
+            // constructing right first, then the closest perpendicular up axis.
+            right = Vec3<T>::YAXIS().Cross(forward).Normalize();
+            up = forward.Cross(right);
+        }
+        else
+        {
+            // Near either Y pole, world +Y cannot reliably determine roll.
+            // Prefer world +X as right instead, without changing forward.
+            up = forward.Cross(Vec3<T>::XAXIS()).Normalize();
+            right = up.Cross(forward);
+        }
+
+        return FromBasis(right, up, forward);
+    }
+
+    /// Creates a rotation from its local X, Y, and Z axes expressed in world space.
+    /// The axes must be unit length, mutually perpendicular, and describe a rotation,
+    /// not a reflection. They are the columns of the corresponding rotation matrix.
+    static UnitQuat FromBasis(const Vec3<T>& right, const Vec3<T>& up, const Vec3<T>& forward)
+    {
+        // Choose a well-conditioned component when converting to a quaternion,
+        // including for half-turns such as facing -Z.
+        // The four branches avoid dividing by a quaternion component near zero.
+        const T trace = right.x + up.y + forward.z;
+        if(trace > T{ 0 })
+        {
+            const T s = std::sqrt(trace + T{ 1 }) * T{ 2 };
+            return UnitQuat((up.z - forward.y) / s,
+                (forward.x - right.z) / s,
+                (right.y - up.x) / s,
+                T{ 0.25 } * s);
+        }
+        if(right.x > up.y && right.x > forward.z)
+        {
+            const T s = std::sqrt(T{ 1 } + right.x - up.y - forward.z) * T{ 2 };
+            return UnitQuat(T{ 0.25 } * s,
+                (up.x + right.y) / s,
+                (forward.x + right.z) / s,
+                (up.z - forward.y) / s);
+        }
+        if(up.y > forward.z)
+        {
+            const T s = std::sqrt(T{ 1 } + up.y - right.x - forward.z) * T{ 2 };
+            return UnitQuat((up.x + right.y) / s,
+                T{ 0.25 } * s,
+                (forward.y + up.z) / s,
+                (forward.x - right.z) / s);
+        }
+
+        const T s = std::sqrt(T{ 1 } + forward.z - right.x - up.y) * T{ 2 };
+        return UnitQuat((forward.x + right.z) / s,
+            (forward.y + up.z) / s,
+            T{ 0.25 } * s,
+            (right.y - up.x) / s);
     }
 
     Mat44<T> ToMatrix() const noexcept;
@@ -970,7 +1047,6 @@ class TrsTransform
     static_assert(std::is_floating_point_v<NumType>, "TrsTransform requires a floating-point type");
 
 public:
-
     using ValueType = NumType;
 
     UnitQuat<NumType> R{ Radians<NumType>{ 0 }, Vec3<NumType>{ 0, 1, 0 } };
@@ -988,10 +1064,7 @@ public:
 
     Mat44<NumType> ToMatrix() const noexcept;
 
-    TrTransform<NumType> ToTrTransform() const noexcept
-    {
-        return TrTransform<NumType>{ R, T };
-    }
+    TrTransform<NumType> ToTrTransform() const noexcept { return TrTransform<NumType>{ R, T }; }
 
     constexpr Vec3<NumType> LocalXAxis() const noexcept
     {

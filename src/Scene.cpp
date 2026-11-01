@@ -501,10 +501,7 @@ Scene::Create(const ResourceBundle& resourceBundle)
         SceneNode& newNode =
             sceneNodes->emplace_back(DirectionalLightNode::kDefaultDirectionalLightName,
                 TrTransformf{});
-        const Radiansf defaultYaw = Radiansf::FromDegrees(45.0f);
-        const Radiansf defaultPitch = Radiansf::FromDegrees(45.0f);
-        const UnitQuatf defaultRotation =
-            UnitQuatf{ defaultYaw, Vec3f::YAXIS() } * UnitQuatf{ defaultPitch, Vec3f::XAXIS() };
+        const UnitQuatf defaultRotation = UnitQuatf::FromZDirection(Vec3f{ 1.0f, -1.0f, 1.0f });
         newNode.SetRotation(defaultRotation);
 
         const RgbColorf defaultColor{ 1.0f, 1.0f, 1.0f };
