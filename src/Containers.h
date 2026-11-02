@@ -54,7 +54,7 @@
 /// Later operations on the moved-from object will reallocate its storage.
 ///
 
-namespace Detail
+namespace detail
 {
 template<typename T, size_t N = 0>
 class BoundedVectorImpl
@@ -384,15 +384,15 @@ private:
     iterator m_Begin{ nullptr };
     iterator m_End{ nullptr };
 };
-} // namespace Detail
+} // namespace detail
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 
 /// BoundedVector is a dynamically sized vector with heap-allocated storage.
 template<typename T>
-using BoundedVector = Detail::BoundedVectorImpl<T, 0>;
+using BoundedVector = detail::BoundedVectorImpl<T, 0>;
 
 /// InplaceVector is a fixed-size vector with in-place storage.
 template<typename T, size_t N>
     requires(N > 0)
-using InplaceVector = Detail::BoundedVectorImpl<T, N>;
+using InplaceVector = detail::BoundedVectorImpl<T, N>;
