@@ -16,6 +16,7 @@
 #include <span>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -903,10 +904,35 @@ CollectCameras(const std::span<const FlatNodeDef> flatNodeDefs)
 
                 if(optCamera)
                 {
-                    const CameraResource cameraRsrc //
+                    CameraResource cameraRsrc //
                         {
                             .NodeIndex = static_cast<IndexType>(nodeIndex),
                         };
+
+                    std::visit([&](const auto& projection)
+                    {
+                        using projType = std::decay_t<decltype(projection)>;
+                        if constexpr (std::is_same_v<projType, Projection::Perspective>)
+                        {
+                            cameraRsrc.ProjectionType = ProjectionTypeResource::Perspective;
+                            cameraRsrc.PerspFovYDegrees = projection.Fov.ToDegrees();
+                            cameraRsrc.AspectRatio = projection.AspectRatio;
+                            cameraRsrc.NearClip = projection.NearClip;
+                            cameraRsrc.FarClip = projection.FarClip;
+                        }
+                        else if constexpr (std::is_same_v<projType, Projection::Orthographic>)
+                        {
+                            cameraRsrc.ProjectionType = ProjectionTypeResource::Orthographic;
+                            cameraRsrc.OrthoHeight = projection.Height;
+                            cameraRsrc.AspectRatio = projection.AspectRatio;
+                            cameraRsrc.NearClip = projection.NearClip;
+                            cameraRsrc.FarClip = projection.FarClip;
+                        }
+                        else
+                        {
+                            static_assert(false, "Unknown projection type");
+                        }
+                    }, optCamera->Projection);
 
                     cameras.push_back(cameraRsrc);
                 }

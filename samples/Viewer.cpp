@@ -158,7 +158,7 @@ MainLoop()
     const UnitQuatf cameraRot = UnitQuatf(cameraYaw, Vec3f::YAXIS());
     const Vec3f cameraPos{ 0, kDefaultCameraHeight, 0 };
 
-    cameraActor.SetLocation(cameraPos);
+    cameraActor.SetTranslation(cameraPos);
     cameraActor.SetRotation(cameraRot);
 
     constexpr ActionMapping actionMappings[] //

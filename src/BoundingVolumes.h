@@ -40,6 +40,8 @@ public:
     static BoundingBox FromVertices(std::span<const Vertex> vertices,
         std::span<const VertexIndex> indices);
 
+    static BoundingBox FromVertices(std::span<const Vec3f> vertices);
+
 private:
     Vec3f m_Center;
     Vec3f m_HalfExtents;

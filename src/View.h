@@ -3,6 +3,7 @@
 #include "CoopTask.h"
 #include "GpuColorPass.h"
 #include "GpuCompositorPass.h"
+#include "GpuShadowPass.h"
 #include "GpuTransformPass.h"
 #include "GpuTypes.h"
 #include "SceneTypes.h"
@@ -11,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <vector>
+#include <webgpu/webgpu_cpp.h>
 
 class Frustum;
 class ResourceBundle;
@@ -50,6 +52,7 @@ private:
     View(const GpuHelper& gpuHelper,
         const Scene& scene,
         std::unique_ptr<GpuColorPass>&& colorPass,
+        std::unique_ptr<GpuShadowPass>&& shadowPass,
         std::unique_ptr<GpuCompositorPass>&& compositorPass,
         std::unique_ptr<GpuTransformPass>&& transformPass,
         GpuVertexBuffer&& vertexBuffer,
@@ -59,7 +62,9 @@ private:
         GpuMeshInstanceParamsBuffer&& meshInstanceParamsBuffer,
         GpuPointLightBuffer&& pointLightBuffer,
         GpuDirectionalLightBuffer&& directionalLightBuffer,
-        GpuCameraParamsBuffer&& cameraParamsBuffer,
+        GpuViewProjBuffer&& cameraViewProjBuffer,
+        GpuViewProjBuffer&& shadowViewProjBuffer,
+        wgpu::Sampler&& shadowSampler,
         std::vector<GpuMaterialProperties>&& materialProperties);
 
     /// Collects all camera-visible meshes.
@@ -68,11 +73,15 @@ private:
     // Sync updates from CPU -> GPU.
     Result<> SyncToGpu();
 
+    Result<> RenderShadowPass(const TrTransformf& cameraWsXForm,
+        const Frustum& cameraFrustum,
+        const wgpu::CommandEncoder& cmdEncoder);
+
     /// Calls a GPU compute shader to transform the scene nodes into camera space.
-    Result<> TransformNodes(const wgpu::Device& gpuDevice,
-        const wgpu::CommandEncoder& cmdEncoder,
+    Result<> TransformNodes(const wgpu::CommandEncoder& cmdEncoder,
         const TrTransformf& wsCameraXForm,
-        const Frustum& frustum);
+        const Frustum& frustum,
+        GpuViewProjBuffer& viewProjBuffer);
 
     const GpuHelper* m_GpuHelper{ nullptr };
 
@@ -80,6 +89,7 @@ private:
 
     std::optional<GpuColorPass::RenderAttachments> m_RenderAttachments;
     std::unique_ptr<GpuColorPass> m_ColorPass;
+    std::unique_ptr<GpuShadowPass> m_ShadowPass;
     std::unique_ptr<GpuCompositorPass> m_CompositorPass;
     std::unique_ptr<GpuTransformPass> m_TransformPass;
 
@@ -90,7 +100,9 @@ private:
     GpuMeshInstanceParamsBuffer m_MeshInstanceParamsBuffer;
     GpuPointLightBuffer m_PointLightBuffer;
     GpuDirectionalLightBuffer m_DirectionalLightBuffer;
-    GpuCameraParamsBuffer m_CameraParamsBuffer;
+    GpuViewProjBuffer m_CameraViewProjBuffer;
+    GpuViewProjBuffer m_ShadowViewProjBuffer;
+    wgpu::Sampler m_ShadowSampler;
 
     std::vector<GpuMaterialProperties> m_MaterialProperties;
 
@@ -140,6 +152,7 @@ private:
 
     std::optional<TextureFetcher> m_TextureFetcher;
     GpuColorPass::CreateTask m_ColorPassTask;
+    GpuShadowPass::CreateTask m_ShadowPassTask;
     GpuCompositorPass::CreateTask m_CompositorPassTask;
     GpuTransformPass::CreateTask m_TransformPassTask;
     std::optional<CoopTaskBatch> m_TaskBatch;

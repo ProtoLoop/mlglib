@@ -199,7 +199,7 @@ TriangleApp::OnUpdate()
             else if(!m_System->IsMinimized())
             {
                 CameraNode& cameraNode = m_Level->GetScene().GetAllCameraNodes().front();
-                cameraNode.SetLocation({ 0, 0, -4 });
+                cameraNode.SetTranslation({ 0, 0, -4 });
 
                 m_Level->GetScene().Update(elapsedSeconds);
 

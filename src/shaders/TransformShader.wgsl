@@ -6,9 +6,9 @@ struct WorldTransform
 struct ClipSpaceTransform
 {
     xform : mat4x4<f32>,
-}
+};
 
-struct Camera
+struct ViewProj
 {
     view      : mat4x4<f32>,
     proj      : mat4x4<f32>,
@@ -17,7 +17,8 @@ struct Camera
 
 @group(0) @binding(0) var<storage, read> inMats : array<WorldTransform>;
 @group(0) @binding(1) var<storage, read_write> outMats : array<ClipSpaceTransform>;
-@group(0) @binding(2) var<uniform> camera : Camera;
+
+@group(1) @binding(0) var<uniform> viewProj : ViewProj;
 
 override WorkgroupSizeOverride: u32;
 
@@ -32,5 +33,5 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>)
         return;
     }
 
-    outMats[i].xform = camera.viewProj * inMats[i].xform;
+    outMats[i].xform = viewProj.viewProj * inMats[i].xform;
 }

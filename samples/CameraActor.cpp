@@ -62,6 +62,9 @@ CameraActor::CameraActor(InputMapper& inputMapper, CameraNode& cameraNode)
     : m_CameraNode(&cameraNode)
 {
     MLG_ABORTIF(!inputMapper.AddActionMappings(actionMappings), "Failed to add action mappings");
+
+    m_TargetTranslation = cameraNode.GetTranslation();
+    m_TargetRotation = cameraNode.GetRotation();
 }
 
 void
@@ -73,7 +76,7 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
     Vec3f moveDelta(0);
 
     UnitQuatf curRot = m_CameraNode->GetRotation();
-    Vec3f curPos = m_CameraNode->GetLocation();
+    Vec3f curPos = m_CameraNode->GetTranslation();
 
     if(inputMapper.IsActionTriggered(CommonActionIds::MoveForward, actionValue))
     {
@@ -114,7 +117,7 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
         m_TargetRotation = m_TargetRotation * pitch;
     }
 
-    m_TargetLocation += moveDelta * kDefaultMovePerSec * deltaSeconds;
+    m_TargetTranslation += moveDelta * kDefaultMovePerSec * deltaSeconds;
 
     constexpr float kTransformTimeToTarget = 0.1f;
     // constexpr float kRotationTimeToTarget = 0.01f;
@@ -122,19 +125,19 @@ CameraActor::Update(const InputMapper& inputMapper, const float deltaSeconds)
     const float dtT = deltaSeconds / kTransformTimeToTarget;
     // const float dtR = deltaSeconds / kRotationTimeToTarget;
 
-    curPos = curPos.Lerp(m_TargetLocation, dtT);
+    curPos = curPos.Lerp(m_TargetTranslation, dtT);
     // m_CurrentTransform.R = m_CurrentTransform.R.Lerp(m_TargetTransform.R, dtR);
     curRot = m_TargetRotation;
 
-    m_CameraNode->SetLocation(curPos);
+    m_CameraNode->SetTranslation(curPos);
     m_CameraNode->SetRotation(curRot);
 }
 
 void
-CameraActor::SetLocation(const Vec3f& location)
+CameraActor::SetTranslation(const Vec3f& location)
 {
-    m_TargetLocation = location;
-    m_CameraNode->SetLocation(location);
+    m_TargetTranslation = location;
+    m_CameraNode->SetTranslation(location);
 }
 
 void

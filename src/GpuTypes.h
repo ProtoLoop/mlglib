@@ -100,6 +100,8 @@ public:
 
     const wgpu::Texture& GetTexture() const { return m_Texture; }
 
+    bool IsValid() const { return m_Texture.Get(); }
+
     const wgpu::Texture* operator->() const { return &m_Texture; }
 
     friend bool operator==(const GpuTextureTarget& a, const GpuTextureTarget& b)
@@ -275,8 +277,8 @@ using GpuClipSpaceTransformBuffer = GpuBuffer<ShaderInterop::ClipSpaceTransform,
     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst>;
 using GpuMeshInstanceParamsBuffer = GpuBuffer<ShaderInterop::MeshInstanceParams,
     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst>;
-using GpuCameraParamsBuffer =
-    GpuBuffer<ShaderInterop::CameraParams, wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst>;
+using GpuViewProjBuffer =
+    GpuBuffer<ShaderInterop::ViewProj, wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst>;
 using GpuMaterialConstantsBuffer = GpuBuffer<ShaderInterop::MaterialConstants,
     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst>;
 

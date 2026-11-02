@@ -20,7 +20,7 @@ public:
 
     void Update(const InputMapper& inputMapper, const float deltaSeconds);
 
-    void SetLocation(const Vec3f& location);
+    void SetTranslation(const Vec3f& location);
 
     void SetRotation(const UnitQuatf& rotation);
 
@@ -36,6 +36,6 @@ private:
 
     CameraNode* m_CameraNode{ nullptr };
 
-    Vec3f m_TargetLocation{ 0, 0, 0 };
+    Vec3f m_TargetTranslation{ 0, 0, 0 };
     UnitQuatf m_TargetRotation = UnitQuatf::Identity();
 };

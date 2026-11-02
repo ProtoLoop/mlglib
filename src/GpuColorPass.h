@@ -51,6 +51,10 @@ public:
         wgpu::BufferBindingType::ReadOnlyStorage,
         wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment>;
 
+    using ShadowViewProjBufferBinding = BufferBinding<GpuViewProjBuffer,
+        wgpu::BufferBindingType::Uniform,
+        wgpu::ShaderStage::Vertex>;
+
     using PointLightBufferBinding = BufferBinding<GpuPointLightBuffer,
         wgpu::BufferBindingType::ReadOnlyStorage,
         wgpu::ShaderStage::Fragment>;
@@ -63,14 +67,22 @@ public:
         wgpu::BufferBindingType::Uniform,
         wgpu::ShaderStage::Fragment>;
 
-    using BindGroup0 = BindGroupHelper<WorldTransformBufferBinding,
+    using ShadowMapBinding = DepthBufferBinding<wgpu::ShaderStage::Fragment>;
+
+    using ShadowSamplerBinding = DepthSamplerBinding<wgpu::ShaderStage::Fragment>;
+
+    using BindGroup0Helper = BindGroupHelper<WorldTransformBufferBinding,
         ClipSpaceBufferBinding,
         MeshInstanceParamsBufferBinding,
         PointLightBufferBinding,
-        DirectionalLightBufferBinding>;
+        DirectionalLightBufferBinding,
+        ShadowViewProjBufferBinding,
+        ShadowMapBinding>;
 
-    using BindGroup1 = BindGroupHelper<TextureBinding<wgpu::ShaderStage::Fragment>,
-        SamplerBinding<wgpu::ShaderStage::Fragment>,
+    using BindGroup1Helper = BindGroupHelper<ShadowSamplerBinding>;
+
+    using BindGroup2Helper = BindGroupHelper<TextureBinding<wgpu::ShaderStage::Fragment>,
+        TextureSamplerBinding<wgpu::ShaderStage::Fragment>,
         MaterialConstantsBufferBinding>;
 
     struct RenderAttachments
@@ -94,7 +106,7 @@ public:
     GpuColorPass& operator=(GpuColorPass&&) = delete;
 
     Result<> SetGeometryBuffers(const GpuVertexBuffer& vertices, const GpuIndexBuffer& indices);
-    Result<> SetBindGroup(const BindGroup0& bg0);
+    Result<> SetBindGroups(const BindGroup0Helper& bg0, const BindGroup1Helper& bg1);
     Result<> SetRenderAttachments(const RenderAttachments& attachments);
 
     /// Executes the pass by rendering the meshses to the render attachments.
@@ -119,29 +131,27 @@ public:
 
 private:
     explicit GpuColorPass(const GpuHelper& gpuHelper,
-        wgpu::BindGroupLayout bg0Layout,
-        wgpu::BindGroupLayout bg1Layout,
         wgpu::RenderPipeline opaquePipeline,
         wgpu::RenderPipeline translucentPipeline,
-        wgpu::Sampler defaultSampler);
+        wgpu::Sampler textureSampler);
 
-    Result<> EnsureBindGroup0();
+    Result<> EnsureBindGroups();
     Result<wgpu::RenderPassEncoder> CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder);
 
     const GpuHelper* m_GpuHelper{ nullptr };
 
     std::optional<GpuVertexBuffer> m_Vertices;
     std::optional<GpuIndexBuffer> m_Indices;
-    std::optional<BindGroup0> m_BindGroup0Params;
+    std::optional<BindGroup0Helper> m_BindGroup0Helper;
+    std::optional<BindGroup1Helper> m_BindGroup1Helper;
     std::optional<RenderAttachments> m_RenderAttachments;
 
-    wgpu::BindGroupLayout m_BindGroup0Layout;
-    wgpu::BindGroupLayout m_BindGroup1Layout;
     wgpu::BindGroup m_BindGroup0;
+    wgpu::BindGroup m_BindGroup1;
     wgpu::RenderPipeline m_OpaquePipeline;
     wgpu::RenderPipeline m_TranslucentPipeline;
 
-    wgpu::Sampler m_DefaultSampler;
+    wgpu::Sampler m_TextureSampler;
 };
 
 class GpuColorPass::CreateTask : public ICoopTask<>

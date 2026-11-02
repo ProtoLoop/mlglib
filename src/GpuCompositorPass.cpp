@@ -1,7 +1,6 @@
 #define MLG_LOGGER_NAME "CMPP"
 
 #include "GpuCompositorPass.h"
-
 #include "GpuHelper.h"
 #include "PerfMetrics.h"
 
@@ -16,7 +15,7 @@ constexpr const char* FragmentEntry_non_srgb = "fs_main_non_srgb";
 constexpr const char* FragmentEntry_srgb = "fs_main_srgb";
 
 Result<wgpu::Sampler>
-CreateSampler(const GpuHelper& gpuHelper)
+CreateSampler(const wgpu::Device& gpuDevice)
 {
     static constexpr wgpu::SamplerDescriptor samplerDesc //
         {
@@ -33,41 +32,29 @@ CreateSampler(const GpuHelper& gpuHelper)
             .maxAnisotropy = 1,
         };
 
-    const wgpu::Sampler sampler = gpuHelper.GetDevice().CreateSampler(&samplerDesc);
+    const wgpu::Sampler sampler = gpuDevice.CreateSampler(&samplerDesc);
     MLG_CHECK(sampler, "Failed to create sampler");
 
     return sampler;
 }
 
-Result<wgpu::BindGroupLayout>
-CreateBindGroupLayout(const GpuHelper& gpuHelper)
-{
-    const auto entries = GpuCompositorPass::BindGroup0::LayoutEntries;
-
-    const wgpu::BindGroupLayoutDescriptor desc //
-        {
-            .label = "GpuCompositorPass",
-            .entryCount = std::size(entries),
-            .entries = entries.data(),
-        };
-
-    const wgpu::BindGroupLayout bindGroupLayout =
-        gpuHelper.GetDevice().CreateBindGroupLayout(&desc);
-    MLG_CHECK(bindGroupLayout, "Failed to create bind group layout");
-
-    return bindGroupLayout;
-}
-
 Result<wgpu::PipelineLayout>
-CreatePipelineLayout(const wgpu::Device& gpuDevice, const wgpu::BindGroupLayout& bindGroupLayout)
+CreatePipelineLayout(const wgpu::Device& gpuDevice)
 {
-    MLG_CHECKV(bindGroupLayout, "Bind group layout is not valid");
+    auto bgLayoutResult = GpuCompositorPass::BindGroup0Helper::CreateBindGroupLayout(gpuDevice,
+        "GpuCompositorPass::BindGroup0Layout");
+    MLG_CHECK(bgLayoutResult, "Failed to create bind group 0 layout");
+
+    const wgpu::BindGroupLayout bindGroupLayouts[] //
+        {
+            *bgLayoutResult,
+        };
 
     const wgpu::PipelineLayoutDescriptor pipelineLayoutDesc //
         {
             .label = "GpuCompositorPass",
-            .bindGroupLayoutCount = 1,
-            .bindGroupLayouts = &bindGroupLayout,
+            .bindGroupLayoutCount = std::size(bindGroupLayouts),
+            .bindGroupLayouts = &bindGroupLayouts[0],
         };
 
     const wgpu::PipelineLayout pipelineLayout = gpuDevice.CreatePipelineLayout(&pipelineLayoutDesc);
@@ -179,17 +166,16 @@ GpuCompositorPass::CreateTask::Take()
     auto shader = m_ShaderFetcher.Take();
     MLG_CHECK(shader, "Failed to fetch shader: {}", ShaderPath);
 
-    auto sampler = CreateSampler(*m_GpuHelper);
+    const wgpu::Device& gpuDevice = m_GpuHelper->GetDevice();
+
+    auto sampler = CreateSampler(gpuDevice);
     MLG_CHECK(sampler);
 
-    auto bindGroupLayout = CreateBindGroupLayout(*m_GpuHelper);
-    MLG_CHECK(bindGroupLayout);
-
-    auto pipelineLayout = CreatePipelineLayout(m_GpuHelper->GetDevice(), *bindGroupLayout);
+    auto pipelineLayout = CreatePipelineLayout(gpuDevice);
     MLG_CHECK(pipelineLayout);
 
     return std::unique_ptr<GpuCompositorPass>(
-        new GpuCompositorPass(*m_GpuHelper, *shader, *sampler, *bindGroupLayout, *pipelineLayout));
+        new GpuCompositorPass(*m_GpuHelper, *shader, *sampler, *pipelineLayout));
 }
 
 // private:
@@ -250,17 +236,14 @@ GpuCompositorPass::CreateTask::OnUpdate()
 GpuCompositorPass::GpuCompositorPass(const GpuHelper& gpuHelper,
     wgpu::ShaderModule shader,
     wgpu::Sampler sampler,
-    wgpu::BindGroupLayout bindGroupLayout,
     wgpu::PipelineLayout pipelineLayout)
     : m_GpuHelper(&gpuHelper),
       m_Shader(std::move(shader)),
       m_Sampler(std::move(sampler)),
-      m_BindGroup0Layout(std::move(bindGroupLayout)),
       m_PipelineLayout(std::move(pipelineLayout))
 {
     MLG_ASSERT(m_Shader, "Shader module is not valid");
     MLG_ASSERT(m_Sampler, "Sampler is not valid");
-    MLG_ASSERT(m_BindGroup0Layout, "Bind group layout is not valid");
     MLG_ASSERT(m_PipelineLayout, "Pipeline layout is not valid");
 }
 
@@ -348,24 +331,20 @@ GpuCompositorPass::EnsureBindGroup0()
         return Result<>::Ok;
     }
 
+    MLG_CHECK(m_Pipeline, "Pipeline is not valid");
     MLG_CHECK(m_SrcRenderTarget,
         "Source render target is not valid - forget to call SetSourceRenderTarget()?");
 
-    const auto bgResult = BindGroup0::Create(m_SrcRenderTarget->GetTexture(), m_Sampler);
+    const auto bgHelperResult =
+        BindGroup0Helper::Create(m_SrcRenderTarget->GetTexture(), m_Sampler);
+    MLG_CHECK(bgHelperResult, "Failed to create bind group 0");
+
+    const auto bgResult = bgHelperResult->CreateBindGroup(m_GpuHelper->GetDevice(),
+        m_Pipeline.GetBindGroupLayout(0),
+        "GpuCompositorPass::BindGroup0");
     MLG_CHECK(bgResult, "Failed to create bind group 0");
 
-    const auto entries = bgResult->GetBindGroupEntries();
-
-    const wgpu::BindGroupDescriptor desc //
-        {
-            .label = "GpuCompositorPass::BindGroup0",
-            .layout = m_BindGroup0Layout,
-            .entryCount = std::size(entries),
-            .entries = entries.data(),
-        };
-
-    m_BindGroup0 = m_GpuHelper->GetDevice().CreateBindGroup(&desc);
-    MLG_CHECK(m_BindGroup0, "Failed to create bind group");
+    m_BindGroup0 = *bgResult;
 
     return Result<>::Ok;
 }

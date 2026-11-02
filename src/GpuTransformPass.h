@@ -25,12 +25,13 @@ public:
         wgpu::BufferBindingType::Storage,
         wgpu::ShaderStage::Compute>;
 
-    using CameraParamsBufferBinding = BufferBinding<GpuCameraParamsBuffer,
+    using ViewProjBufferBinding = BufferBinding<GpuViewProjBuffer,
         wgpu::BufferBindingType::Uniform,
         wgpu::ShaderStage::Compute>;
 
-    using BindGroup0 =
-        BindGroupHelper<WorldTransformBufferBinding, ClipSpaceBufferBinding, CameraParamsBufferBinding>;
+    using BindGroup0Helper = BindGroupHelper<WorldTransformBufferBinding, ClipSpaceBufferBinding>;
+
+    using BindGroup1Helper = BindGroupHelper<ViewProjBufferBinding>;
 
     GpuTransformPass() = delete;
     ~GpuTransformPass() = default;
@@ -39,7 +40,7 @@ public:
     GpuTransformPass(GpuTransformPass&&) = delete;
     GpuTransformPass& operator=(GpuTransformPass&&) = delete;
 
-    Result<> SetBindGroup(const BindGroup0& bg0);
+    Result<> SetBindGroups(const BindGroup0Helper& bg0, const BindGroup1Helper& bg1);
 
     /// Executes the pass by performing the transform computation.
     /// This variant of Execute creates a command encoder that's owned and
@@ -52,20 +53,20 @@ public:
     Result<> Execute(const wgpu::CommandEncoder& cmdEncoder);
 
 private:
-    GpuTransformPass(const GpuHelper& gpuHelper,
-        wgpu::BindGroupLayout bindGroupLayout,
-        wgpu::ComputePipeline pipeline);
+    GpuTransformPass(const GpuHelper& gpuHelper, wgpu::ComputePipeline pipeline);
 
-    Result<> EnsureBindGroup0();
+    Result<> EnsureBindGroups();
+
     Result<wgpu::ComputePassEncoder> CreateComputePassEncoder(
         const wgpu::CommandEncoder& cmdEncoder);
 
     const GpuHelper* m_GpuHelper;
 
-    std::optional<BindGroup0> m_BindGroup0Params;
+    std::optional<BindGroup0Helper> m_BindGroup0Helper;
+    std::optional<BindGroup1Helper> m_BindGroup1Helper;
 
-    wgpu::BindGroupLayout m_BindGroup0Layout;
     wgpu::BindGroup m_BindGroup0;
+    wgpu::BindGroup m_BindGroup1;
     wgpu::ComputePipeline m_Pipeline;
 };
 

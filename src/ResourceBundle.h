@@ -643,18 +643,37 @@ MLG_ASSERT_SIZE(RigidBodyResource, 20)
 
 /// CameraResource
 
+enum class ProjectionTypeResource : uint32_t
+{
+    Perspective,
+    Orthographic
+};
+
 #define CAMERA_RESOURCE_FIELDS(X)                                                                  \
-    X(ResourceBundle::IndexType, NodeIndex, ResourceBundle::kInvalidIndex)
+    X(ResourceBundle::IndexType, NodeIndex, ResourceBundle::kInvalidIndex)                         \
+    X(ProjectionTypeResource, ProjectionType, ProjectionTypeResource::Perspective)                 \
+    X(float, OrthoHeight, 1.0f)                                                                    \
+    X(float, PerspFovYDegrees, 45.0f)                                                              \
+    X(float, AspectRatio, 1.0f)                                                                    \
+    X(float, NearClip, 0.1f)                                                                      \
+    X(float, FarClip, 1000.0f)
 
 struct CameraResource final
 {
+    // NOLINTNEXTLINE(readability-magic-numbers)
     CAMERA_RESOURCE_FIELDS(MLG_DECLARE_FIELD)
 };
 static_assert(BinaryStruct<CameraResource>);
-MLG_ASSERT_FIELD_COUNT(CAMERA_RESOURCE_FIELDS, 1);
+MLG_ASSERT_FIELD_COUNT(CAMERA_RESOURCE_FIELDS, 7);
 MLG_ASSERT_NO_PADDING(CameraResource, CAMERA_RESOURCE_FIELDS);
 MLG_ASSERT_OFFSET(CameraResource, NodeIndex, 0)
-MLG_ASSERT_SIZE(CameraResource, 4)
+MLG_ASSERT_OFFSET(CameraResource, ProjectionType, 4)
+MLG_ASSERT_OFFSET(CameraResource, OrthoHeight, 8)
+MLG_ASSERT_OFFSET(CameraResource, PerspFovYDegrees, 12)
+MLG_ASSERT_OFFSET(CameraResource, AspectRatio, 16)
+MLG_ASSERT_OFFSET(CameraResource, NearClip, 20)
+MLG_ASSERT_OFFSET(CameraResource, FarClip, 24)
+MLG_ASSERT_SIZE(CameraResource, 28)
 
 /// PointLightResource
 

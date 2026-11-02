@@ -204,7 +204,7 @@ TranslucentApp::OnUpdate()
                     {
                         CameraNode& cameraNode = m_Level->GetScene().GetAllCameraNodes().front();
                         m_CameraActor.emplace(m_System->GetInputMapper(), cameraNode);
-                        m_CameraActor->SetLocation({ 0, 0, -4 });
+                        m_CameraActor->SetTranslation({ 0, 0, -4 });
                         m_Stage = Stage::Running;
                     }
 

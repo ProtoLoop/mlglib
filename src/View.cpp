@@ -2,7 +2,7 @@
 
 #include "View.h"
 
-#include "Cullers.h"
+#include "Frustum.h"
 #include "GpuHelper.h"
 #include "PerfMetrics.h"
 #include "ResourceBundle.h"
@@ -186,33 +186,31 @@ CreateDirectionalLightBuffer(const GpuHelper& gpuHelper,
     return GpuDirectionalLightBuffer::Create(buffer);
 }
 
-/// Returns the world-space transform of the given camera node.
-TrTransformf
-GetCameraWsTransform(const CameraNode& camera)
+Result<wgpu::Sampler>
+CreateShadowSampler(const GpuHelper& gpuHelper)
 {
-    UnitQuatf rotation = UnitQuatf::Identity();
+    static constexpr wgpu::SamplerDescriptor samplerDesc //
+        {
+            .addressModeU = wgpu::AddressMode::ClampToEdge,
+            .addressModeV = wgpu::AddressMode::ClampToEdge,
+            .addressModeW = wgpu::AddressMode::ClampToEdge,
+            .magFilter = wgpu::FilterMode::Linear,
+            .minFilter = wgpu::FilterMode::Linear,
+            .mipmapFilter = wgpu::MipmapFilterMode::Linear,
+            .compare = wgpu::CompareFunction::LessEqual,
+        };
 
-    // Accumulate rotation from the camera node and its ancestors.
-    // Exclude scaling that might be present in the local transforms.
-    for(const SceneNode* node = &camera.GetSceneNode(); node; node = node->GetParent())
-    {
-        rotation = node->GetTransform().R * rotation;
-    }
+    wgpu::Sampler sampler = gpuHelper.GetDevice().CreateSampler(&samplerDesc);
+    MLG_CHECK(sampler, "Failed to create default sampler");
 
-    // Extract the translation component (possibly scaled) from the world-space matrix.
-    const Mat44f& world = camera.GetWsMatrix();
-
-    return TrTransformf//
-    {
-        .R = rotation,
-        .T = Vec3f{ world[3].x, world[3].y, world[3].z },
-    };
+    return sampler;
 }
 } // namespace
 
 View::View(const GpuHelper& gpuHelper,
     const Scene& scene,
     std::unique_ptr<GpuColorPass>&& colorPass,
+    std::unique_ptr<GpuShadowPass>&& shadowPass,
     std::unique_ptr<GpuCompositorPass>&& compositorPass,
     std::unique_ptr<GpuTransformPass>&& transformPass,
     GpuVertexBuffer&& vertexBuffer,
@@ -222,11 +220,14 @@ View::View(const GpuHelper& gpuHelper,
     GpuMeshInstanceParamsBuffer&& meshInstanceParamsBuffer,
     GpuPointLightBuffer&& pointLightBuffer,
     GpuDirectionalLightBuffer&& directionalLightBuffer,
-    GpuCameraParamsBuffer&& cameraParamsBuffer,
+    GpuViewProjBuffer&& cameraViewProjBuffer,
+    GpuViewProjBuffer&& shadowViewProjBuffer,
+    wgpu::Sampler&& shadowSampler,
     std::vector<GpuMaterialProperties>&& materialProperties)
     : m_GpuHelper(&gpuHelper),
       m_Scene(&scene),
       m_ColorPass(std::move(colorPass)),
+      m_ShadowPass(std::move(shadowPass)),
       m_CompositorPass(std::move(compositorPass)),
       m_TransformPass(std::move(transformPass)),
       m_VertexBuffer(std::move(vertexBuffer)),
@@ -236,7 +237,9 @@ View::View(const GpuHelper& gpuHelper,
       m_MeshInstanceParamsBuffer(std::move(meshInstanceParamsBuffer)),
       m_PointLightBuffer(std::move(pointLightBuffer)),
       m_DirectionalLightBuffer(std::move(directionalLightBuffer)),
-      m_CameraParamsBuffer(std::move(cameraParamsBuffer)),
+      m_CameraViewProjBuffer(std::move(cameraViewProjBuffer)),
+      m_ShadowViewProjBuffer(std::move(shadowViewProjBuffer)),
+      m_ShadowSampler(std::move(shadowSampler)),
       m_MaterialProperties(std::move(materialProperties)),
       m_TotalMeshInstanceCount(CountMeshInstances(scene.GetAllModelNodes()))
 {
@@ -280,9 +283,11 @@ View::Render(const Dimension2d& dstExtents)
     MLG_CHECK(frustumResult);
     const Frustum frustum = *frustumResult;
 
-    const TrTransformf cameraWsXForm = GetCameraWsTransform(cameraNode);
+    const TrTransformf cameraWsXForm = cameraNode.GetWsTransform();
 
-    MLG_CHECK(TransformNodes(gpuDevice, cmdEncoder, cameraWsXForm, frustum));
+    MLG_CHECK(RenderShadowPass(cameraWsXForm,frustum, cmdEncoder));
+
+    MLG_CHECK(TransformNodes(cmdEncoder, cameraWsXForm, frustum, m_CameraViewProjBuffer));
 
     if(!m_RenderAttachments
         || m_RenderAttachments->RenderTarget->GetWidth() != dstExtents.GetWidth()
@@ -295,16 +300,20 @@ View::Render(const Dimension2d& dstExtents)
         m_RenderAttachments = std::move(*colorPassAttachments);
     }
 
-    const auto bg0Result = GpuColorPass::BindGroup0::Create(
-        m_WorldTransformBuffer,
+    const auto bg0Result = GpuColorPass::BindGroup0Helper::Create(m_WorldTransformBuffer,
         m_ClipSpaceBuffer,
         m_MeshInstanceParamsBuffer,
         m_PointLightBuffer,
-        m_DirectionalLightBuffer);
+        m_DirectionalLightBuffer,
+        m_ShadowViewProjBuffer,
+        m_ShadowPass->GetDepthTarget().GetTexture());
     MLG_CHECK(bg0Result, "Failed to create bind group 0 for color pass");
 
+    const auto bg1Result = GpuColorPass::BindGroup1Helper::Create(m_ShadowSampler);
+    MLG_CHECK(bg1Result, "Failed to create bind group 1 for color pass");
+
     MLG_CHECK(m_ColorPass->SetGeometryBuffers(m_VertexBuffer, m_IndexBuffer));
-    MLG_CHECK(m_ColorPass->SetBindGroup(*bg0Result));
+    MLG_CHECK(m_ColorPass->SetBindGroups(*bg0Result, *bg1Result));
     MLG_CHECK(m_ColorPass->SetRenderAttachments(*m_RenderAttachments));
 
     CullMeshes(cameraWsXForm, frustum);
@@ -355,28 +364,59 @@ View::CullMeshes(const TrTransformf& wsCameraXForm, const Frustum& frustum)
     const Vec3f cameraForward = wsCameraXForm.R * Vec3f::ZAXIS();
     const Frustum wsFrustum = frustum.Transform(wsCameraXForm);
 
-    const ModelCuller modelCuller(m_Scene->GetAllModelNodes(), wsFrustum);
-    for(const ModelCuller::CulledModel& culledModel : modelCuller)
+    for(const ModelNode& modelNode : m_Scene->GetAllModelNodes())
     {
-        const MeshCuller meshCuller(culledModel, wsFrustum);
+        const Mat44f& wsMatrix = modelNode.GetWsMatrix();
+        const BoundingSphere wsModelBounds = wsMatrix * modelNode.GetLocalSpaceBoundingSphere();
+        const Frustum::ContainsResult containsResult = wsFrustum.Contains(wsModelBounds);
 
-        for(const MeshCuller::CulledMesh& culledMesh : meshCuller)
+        if(containsResult == Frustum::ContainsResult::Outside)
         {
-            // Camera space depth of the mesh's bounding sphere center.
-            // Used for depth sorting.
-            const float depth = cameraForward.Dot(culledMesh.WorldSpacePos - cameraPos);
+            continue;
+        }
 
-            const uint32_t matIndex = culledMesh.Mesh->GetMaterialIndex();
-            MLG_ASSERT(matIndex < m_MaterialProperties.size(), "Material index out of bounds");
+        uint32_t instanceIndex = modelNode.GetFirstMeshInstanceIndex();
 
-            const AlphaMode alphaMode = m_MaterialProperties[matIndex].GetAlphaMode();
+        if(containsResult == Frustum::ContainsResult::Inside)
+        {
+            for(const Mesh& mesh : modelNode.GetMeshes())
+            {
+                const BoundingSphere wsMeshBounds = wsMatrix * mesh.GetBoundingSphere();
 
-            const MeshInstance meshInstance(*culledMesh.Mesh,
-                culledMesh.InstanceIndex,
-                alphaMode,
-                depth);
+                const uint32_t matIndex = mesh.GetMaterialIndex();
+                MLG_ASSERT(matIndex < m_MaterialProperties.size(), "Material index out of bounds");
 
-            m_CulledMeshes.push_back(meshInstance);
+                const AlphaMode alphaMode = m_MaterialProperties[matIndex].GetAlphaMode();
+
+                // Camera space depth of the mesh's bounding sphere center.
+                // Used for depth sorting.
+                const float depth = cameraForward.Dot(wsMeshBounds.GetCenter() - cameraPos);
+
+                m_CulledMeshes.emplace_back(mesh, instanceIndex++, alphaMode, depth);
+            }
+        }
+        else
+        {
+            for(const Mesh& mesh : modelNode.GetMeshes())
+            {
+                ++instanceIndex;
+                const BoundingSphere wsMeshBounds = wsMatrix * mesh.GetBoundingSphere();
+                if(wsFrustum.Contains(wsMeshBounds) == Frustum::ContainsResult::Outside)
+                {
+                    continue;
+                }
+
+                const uint32_t matIndex = mesh.GetMaterialIndex();
+                MLG_ASSERT(matIndex < m_MaterialProperties.size(), "Material index out of bounds");
+
+                const AlphaMode alphaMode = m_MaterialProperties[matIndex].GetAlphaMode();
+
+                // Camera space depth of the mesh's bounding sphere center.
+                // Used for depth sorting.
+                const float depth = cameraForward.Dot(wsMeshBounds.GetCenter() - cameraPos);
+
+                m_CulledMeshes.emplace_back(mesh, instanceIndex - 1, alphaMode, depth);
+            }
         }
     }
 
@@ -436,32 +476,139 @@ View::SyncToGpu()
 }
 
 Result<>
-View::TransformNodes(const wgpu::Device& gpuDevice,
-    const wgpu::CommandEncoder& cmdEncoder,
+View::RenderShadowPass(const TrTransformf& cameraWsXForm,
+    const Frustum& cameraFrustum,
+    const wgpu::CommandEncoder& cmdEncoder)
+{
+    MLG_SCOPED_TIMER("View.RenderShadowPass");
+
+    // Only consider the first directional light for now.
+    const DirectionalLightNode& lightNode = m_Scene->GetAllDirectionalLights().front();
+    
+    // Transform the camera frustum corners from camera spaceinto light space.
+
+    const std::array corners = cameraFrustum.GetCorners();
+
+    TrTransformf lightWsXForm = lightNode.GetWsTransform();
+
+    // Compute the bounding box of the camera frustum in camera space.
+    // This will be used as the stable sized height/width for the orthographic projection.
+    // IOW, the dimensions of this box don't change as the camera moves so it keeps
+    // the ortho proj stable.
+    const BoundingBox camSpaceBbox = BoundingBox::FromVertices(corners);
+    const Vec3f& csHalfExtents = camSpaceBbox.GetHalfExtents();
+    const float radius = std::hypot(csHalfExtents.x, csHalfExtents.y, csHalfExtents.z);
+
+    // Compute the matrix that transforms from camera space to light space. Only use the rotation
+    // part of the light's world-space transform - translation doesn't matter for directional
+    // lights.
+    const Mat44f m = lightWsXForm.R.Inverse().ToMatrix() * cameraWsXForm.ToMatrix();
+
+    // Transform the camera frustum corners into light space.
+    const std::array<Vec3f, std::size(corners)> lightSpaceCorners = //
+        {
+            (m * Vec4f(corners[0], 1)).xyz(),
+            (m * Vec4f(corners[1], 1)).xyz(),
+            (m * Vec4f(corners[2], 1)).xyz(),
+            (m * Vec4f(corners[3], 1)).xyz(),
+            (m * Vec4f(corners[4], 1)).xyz(),
+            (m * Vec4f(corners[5], 1)).xyz(),
+            (m * Vec4f(corners[6], 1)).xyz(),
+            (m * Vec4f(corners[7], 1)).xyz(),
+        };
+
+    // Re-compute the bounding box of the camera frustum, but this time in light space.
+    // This will be used to find the depth range for the orthographic projection.
+    // It will also be used to position the light's camera (lightcam) correctly.
+    const BoundingBox lightSpaceBbox = BoundingBox::FromVertices(lightSpaceCorners);
+
+    constexpr float nearClip = Projection::kDefaultNearClip;
+
+    // Ortho projection depth range.
+    const float orthoMinZ = lightSpaceBbox.GetCenter().z - lightSpaceBbox.GetHalfExtents().z;
+    const float orthoMaxZ = lightSpaceBbox.GetCenter().z + lightSpaceBbox.GetHalfExtents().z;
+
+    float orthoHeight = 2.0f * radius;
+
+    const float kShadowBufferSize = GpuShadowPass::kShadowBufferSize;
+
+    //  Expand the height to account for the box texel snap done below.
+    orthoHeight *= kShadowBufferSize / (kShadowBufferSize - 1.0f);
+    const float texelSize = orthoHeight / kShadowBufferSize;
+
+    constexpr float kExtraDepth = 500; // DO NOT SUBMIT
+
+    // Position the lightcam back from the front face by a distance
+    // equal to the near clip.
+    Vec3f position;
+    position.x = lightSpaceBbox.GetCenter().x;
+    position.y = lightSpaceBbox.GetCenter().y;
+    position.z = orthoMinZ - nearClip - kExtraDepth;
+    
+    // Snap the lightcam position to the nearest texel to reduce shadow swimming.
+    position.x = std::round(position.x / texelSize) * texelSize;
+    position.y = std::round(position.y / texelSize) * texelSize;
+
+    // Transform the position into world space and use it for the lightcam's translation.
+    lightWsXForm.T = lightWsXForm.R * position;
+
+    const Projection::Orthographic orthoProj//
+    {
+        .Height = orthoHeight,
+        .AspectRatio = 1.0f,
+        .NearClip = nearClip,
+        .FarClip = orthoMaxZ - orthoMinZ + nearClip + kExtraDepth,
+    };
+
+    const auto frustumResult = Frustum::Create(orthoProj);
+    const Frustum frustum = *frustumResult;
+
+    MLG_CHECK(TransformNodes(cmdEncoder, lightWsXForm, frustum, m_ShadowViewProjBuffer));
+
+    const auto bg0Result =
+        GpuShadowPass::BindGroup0Helper::Create(m_ClipSpaceBuffer, m_MeshInstanceParamsBuffer);
+    MLG_CHECK(bg0Result, "Failed to create bind group 0 for shadow pass");
+
+    MLG_CHECK(m_ShadowPass->SetGeometryBuffers(m_VertexBuffer, m_IndexBuffer));
+    MLG_CHECK(m_ShadowPass->SetBindGroup(*bg0Result));
+
+    CullMeshes(lightWsXForm, frustum);
+
+    MLG_CHECK(m_ShadowPass->Execute(m_CulledMeshes, cmdEncoder));
+
+    return Result<>::Ok;
+}
+
+Result<>
+View::TransformNodes(const wgpu::CommandEncoder& cmdEncoder,
     const TrTransformf& wsCameraXForm,
-    const Frustum& frustum)
+    const Frustum& frustum,
+    GpuViewProjBuffer& viewProjBuffer)
 {
     const Mat44f view = wsCameraXForm.Inverse().ToMatrix();
     const Mat44f proj = frustum.GetMatrix();
-    const ShaderInterop::CameraParams cameraParams //
+    const ShaderInterop::ViewProj viewProj //
         {
             .View = view,
             .Projection = proj,
             .ViewProj = proj * view,
         };
 
-    gpuDevice.GetQueue().WriteBuffer(m_CameraParamsBuffer.GetBuffer(),
-        0,
-        &cameraParams,
-        sizeof(ShaderInterop::CameraParams));
+    const wgpu::Device& gpuDevice = m_GpuHelper->GetDevice();
 
-    const auto bg0Result = GpuTransformPass::BindGroup0::Create(
-        m_WorldTransformBuffer,
-        m_ClipSpaceBuffer,
-        m_CameraParamsBuffer);
+    gpuDevice.GetQueue().WriteBuffer(viewProjBuffer.GetBuffer(),
+        0,
+        &viewProj,
+        sizeof(ShaderInterop::ViewProj));
+
+    const auto bg0Result = GpuTransformPass::BindGroup0Helper::Create(m_WorldTransformBuffer,
+        m_ClipSpaceBuffer);
     MLG_CHECK(bg0Result, "Failed to create bind group 0 for transform pass");
 
-    MLG_CHECK(m_TransformPass->SetBindGroup(*bg0Result));
+    const auto bg1Result = GpuTransformPass::BindGroup1Helper::Create(viewProjBuffer);
+    MLG_CHECK(bg1Result, "Failed to create bind group 1 for transform pass");
+
+    MLG_CHECK(m_TransformPass->SetBindGroups(*bg0Result, *bg1Result));
 
     return m_TransformPass->Execute(cmdEncoder);
 }
@@ -476,6 +623,7 @@ View::CreateTask::CreateTask(System& system,
       m_Scene(&scene),
       m_ParentPath(parentPath),
       m_ColorPassTask(m_System->GetGpuHelper(), m_System->GetFileFetcher()),
+      m_ShadowPassTask(m_System->GetGpuHelper(), m_System->GetFileFetcher()),
       m_CompositorPassTask(m_System->GetGpuHelper(), m_System->GetFileFetcher()),
       m_TransformPassTask(m_System->GetGpuHelper(), m_System->GetFileFetcher())
 {
@@ -495,6 +643,9 @@ View::CreateTask::Take()
 
     auto gpuColorPassResult = m_ColorPassTask.Take();
     MLG_CHECK(gpuColorPassResult, "Failed to create GpuColorPass");
+
+    auto gpuShadowPassResult = m_ShadowPassTask.Take();
+    MLG_CHECK(gpuShadowPassResult, "Failed to create GpuShadowPass");
 
     auto gpuCompositorPassResult = m_CompositorPassTask.Take();
     MLG_CHECK(gpuCompositorPassResult, "Failed to create GpuCompositorPass");
@@ -543,12 +694,19 @@ View::CreateTask::Take()
     auto directionalLightBuffer = CreateDirectionalLightBuffer(gpuHelper, directionalLights);
     MLG_CHECK(directionalLightBuffer);
 
-    auto cameraParamsBuf = gpuHelper.CreateTypedBuffer<GpuCameraParamsBuffer>(1, "CameraParams");
-    MLG_CHECK(cameraParamsBuf);
+    auto cameraViewProjBuf = gpuHelper.CreateTypedBuffer<GpuViewProjBuffer>(1, "CameraViewProj");
+    MLG_CHECK(cameraViewProjBuf);
+
+    auto shadowViewProjBuf = gpuHelper.CreateTypedBuffer<GpuViewProjBuffer>(1, "ShadowViewProj");
+    MLG_CHECK(shadowViewProjBuf);
+
+    auto shadowSamplerResult = CreateShadowSampler(gpuHelper);
+    MLG_CHECK(shadowSamplerResult, "Failed to create shadow sampler");
 
     std::unique_ptr<View> view(new View(gpuHelper,
         *m_Scene,
         std::move(*gpuColorPassResult),
+        std::move(*gpuShadowPassResult),
         std::move(*gpuCompositorPassResult),
         std::move(*gpuTransformPassResult),
         std::move(*vertexBuffer),
@@ -558,7 +716,9 @@ View::CreateTask::Take()
         std::move(*meshInstanceParamsBuffer),
         std::move(*pointLightBuffer),
         std::move(*directionalLightBuffer),
-        std::move(*cameraParamsBuf),
+        std::move(*cameraViewProjBuf),
+        std::move(*shadowViewProjBuf),
+        std::move(*shadowSamplerResult),
         std::move(*materialProperties)));
 
     MLG_CHECK(view->SyncToGpu());
@@ -580,9 +740,11 @@ View::CreateTask::OnStart()
         *m_ResourceBundle);
 
     // If one task fails to start, it will not be added to the task batch.
-    // But we still have to let the tasks that did start run to completion.
+    // But we still have to let the tasks that did start run to completion.    
 
-    InplaceVector<ICoopTask<>*, 4> tasks;
+    constexpr size_t kNumTasks = 5;
+    
+    InplaceVector<ICoopTask<>*, kNumTasks> tasks;
 
     if(!m_TextureFetcher->Start())
     {
@@ -600,6 +762,15 @@ View::CreateTask::OnStart()
     else
     {
         tasks.push_back(&m_ColorPassTask);
+    }
+
+    if(!m_ShadowPassTask.Start())
+    {
+        MLG_ERROR("Failed to start shadow pass task");
+    }
+    else
+    {
+        tasks.push_back(&m_ShadowPassTask);
     }
 
     if(!m_CompositorPassTask.Start())

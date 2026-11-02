@@ -159,8 +159,11 @@ struct RigidBodyDef final
     std::vector<ColliderDef> Colliders;
 };
 
+using ProjectionDef = std::variant<Projection::Perspective, Projection::Orthographic>;
+
 struct CameraDef final
 {
+    ProjectionDef Projection;
 };
 
 struct DirectionalLightDef final
@@ -348,11 +351,11 @@ public:
     /// This does not include any parent transforms.
     const TrsTransformf& GetTransform() const { return m_LocalTransform; }
 
-    /// Sets the location of the node within its local transform.
-    void SetLocation(const Vec3f& location) { m_LocalTransform.T = location; }
+    /// Sets the translation of the node within its local transform.
+    void SetTranslation(const Vec3f& translation) { m_LocalTransform.T = translation; }
 
-    /// Returns the location of the node within its local transform.
-    const Vec3f& GetLocation() const { return m_LocalTransform.T; }
+    /// Returns the translation of the node within its local transform.
+    const Vec3f& GetTranslation() const { return m_LocalTransform.T; }
 
     /// Sets the rotation of the node within its local transform.
     void SetRotation(const UnitQuatf& rotation) { m_LocalTransform.R = rotation; }
@@ -490,19 +493,16 @@ public:
     /// Returns the scene node associated with this point light.
     const SceneNode& GetSceneNode() const { return *m_SceneNode; }
 
-    /// Returns the world space transformation matrix.
-    /// This includes all parent transforms.
-    const Mat44f& GetWsMatrix() const { return m_SceneNode->GetWsMatrix(); }
+    /// Returns the world space transformation, excluding scale that might be present in the local
+    /// or ancestor transforms. Scale is applied to the translation component to ensure the world
+    /// space translation is correct.
+    TrTransformf GetWsTransform() const;
 
-    /// Returns the local space transformation.
-    /// This does not include any parent transforms.
-    TrsTransformf GetTransform() const { return m_SceneNode->GetTransform(); }
+    /// Sets the translation of the light within its local transform.
+    void SetTranslation(const Vec3f& translation) { m_SceneNode->SetTranslation(translation); }
 
-    /// Sets the location of the light within its local transform.
-    void SetLocation(const Vec3f& location) { m_SceneNode->SetLocation(location); }
-
-    /// Returns the location of the light within its local transform.
-    const Vec3f& GetLocation() const { return m_SceneNode->GetLocation(); }
+    /// Returns the translation of the light within its local transform.
+    const Vec3f& GetTranslation() const { return m_SceneNode->GetTranslation(); }
 
     /// Sets the rotation of the light within its local transform.
     void SetRotation(const UnitQuatf& rotation) { m_SceneNode->SetRotation(rotation); }
@@ -541,19 +541,16 @@ public:
     /// Returns the scene node associated with this directional light.
     const SceneNode& GetSceneNode() const { return *m_SceneNode; }
 
-    /// Returns the world space transformation matrix.
-    /// This includes all parent transforms.
-    const Mat44f& GetWsMatrix() const { return m_SceneNode->GetWsMatrix(); }
+    /// Returns the world space transformation, excluding scale that might be present in the local
+    /// or ancestor transforms. Scale is applied to the translation component to ensure the world
+    /// space translation is correct.
+    TrTransformf GetWsTransform() const;
 
-    /// Returns the local space transformation.
-    /// This does not include any parent transforms.
-    TrsTransformf GetTransform() const { return m_SceneNode->GetTransform(); }
+    /// Sets the translation of the light within its local transform.
+    void SetTranslation(const Vec3f& translation) { m_SceneNode->SetTranslation(translation); }
 
-    /// Sets the location of the light within its local transform.
-    void SetLocation(const Vec3f& location) { m_SceneNode->SetLocation(location); }
-
-    /// Returns the location of the light within its local transform.
-    const Vec3f& GetLocation() const { return m_SceneNode->GetLocation(); }
+    /// Returns the translation of the light within its local transform.
+    const Vec3f& GetTranslation() const { return m_SceneNode->GetTranslation(); }
 
     /// Sets the rotation of the light within its local transform.
     void SetRotation(const UnitQuatf& rotation) { m_SceneNode->SetRotation(rotation); }
@@ -595,25 +592,29 @@ public:
     /// Returns the scene node associated with this camera.
     const SceneNode& GetSceneNode() const { return *m_SceneNode; }
 
-    /// Returns the world space transformation matrix of the camera.
-    /// This includes all parent transforms.
-    const Mat44f& GetWsMatrix() const { return m_SceneNode->GetWsMatrix(); }
+    /// Returns the world space transformation of the camera.
+    /// Excludes scaling that might be present in the local or ancestor transforms,
+    /// though scale is applied to the translation component to ensure the world
+    /// space translation is correct.
+    TrTransformf GetWsTransform() const;
 
-    /// Returns the local space transformation of the camera.
-    /// This does not include any parent transforms.
-    TrsTransformf GetTransform() const { return m_SceneNode->GetTransform(); }
+    /// Sets the translation of the camera within its local transform.
+    void SetTranslation(const Vec3f& translation) { m_SceneNode->SetTranslation(translation); }
 
-    /// Sets the location of the camera within its local transform.
-    void SetLocation(const Vec3f& location) { m_SceneNode->SetLocation(location); }
-
-    /// Returns the location of the camera within its local transform.
-    const Vec3f& GetLocation() const { return m_SceneNode->GetLocation(); }
+    /// Returns the translation of the camera within its local transform.
+    const Vec3f& GetTranslation() const { return m_SceneNode->GetTranslation(); }
 
     /// Sets the rotation of the camera within its local transform.
     void SetRotation(const UnitQuatf& rotation) { m_SceneNode->SetRotation(rotation); }
 
     /// Returns the rotation of the camera within its local transform.
     const UnitQuatf& GetRotation() const { return m_SceneNode->GetRotation(); }
+
+    /// Sets the projection settings for the camera using a perspective projection.
+    Result<> SetProjection(const Projection::Perspective& projection);
+
+    /// Sets the projection settings for the camera using an orthographic projection.
+    Result<> SetProjection(const Projection::Orthographic& projection);
 
     /// Creates a view frustum for the camera using the specified aspect ratio.
     /// The frustum will be based on the camera's current projection settings.

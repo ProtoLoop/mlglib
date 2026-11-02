@@ -403,11 +403,40 @@ CollectCameraNodes(const ResourceBundle& resourceBundle, const std::span<SceneNo
 
     BoundedVector<CameraNode> cameraNodes(cameras.size());
 
-    for(const CameraResource& camera : cameras)
+    for(const CameraResource& cameraRsrc : cameras)
     {
-        SceneNode& sceneNode = nodes[camera.NodeIndex];
+        SceneNode& sceneNode = nodes[cameraRsrc.NodeIndex];
 
-        cameraNodes.emplace_back(sceneNode);
+        CameraNode& cameraNode = cameraNodes.emplace_back(sceneNode);
+
+        switch(cameraRsrc.ProjectionType)
+        {
+            case ProjectionTypeResource::Perspective:
+            {
+                const Projection::Perspective proj //
+                    { .Fov = Radiansf::FromDegrees(cameraRsrc.PerspFovYDegrees),
+                        .AspectRatio = cameraRsrc.AspectRatio,
+                        .NearClip = cameraRsrc.NearClip,
+                        .FarClip = cameraRsrc.FarClip };
+
+                MLG_CHECK(cameraNode.SetProjection(proj), "Failed to set camera projection");
+            }
+            break;
+            case ProjectionTypeResource::Orthographic:
+            {
+                const Projection::Orthographic proj //
+                    { .Height = cameraRsrc.OrthoHeight,
+                        .AspectRatio = cameraRsrc.AspectRatio,
+                        .NearClip = cameraRsrc.NearClip,
+                        .FarClip = cameraRsrc.FarClip };
+                MLG_CHECK(cameraNode.SetProjection(proj), "Failed to set camera projection");
+            }
+            break;
+            default:
+                MLG_ERROR("Unknown projection type");
+                return Result<>::Fail;
+                break;
+        }
     }
 
     MLG_INFO("Collected camera nodes: {}", cameraNodes.size());

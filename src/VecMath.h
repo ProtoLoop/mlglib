@@ -95,6 +95,11 @@ public:
         return Radians<T>(degrees * std::numbers::pi_v<T> / 180);
     }
 
+    constexpr T ToDegrees() const noexcept
+    {
+        return FromRep(m_Value) * 180 / std::numbers::pi_v<T>;
+    }
+
     T Sin() const noexcept { return std::sin(FromRep(m_Value)); }
 
     T Cos() const noexcept { return std::cos(FromRep(m_Value)); }

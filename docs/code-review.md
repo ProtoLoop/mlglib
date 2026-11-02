@@ -56,6 +56,8 @@ unless the user explicitly approves changes.
   validation, and lifecycle.
 - Check declarations, definitions, and call sites together when signatures change.
 - Look for stale diagnostics, labels, comments, examples, and documentation.
+- Flag comments containing `DO NOT SUBMIT` or `DONOTSUBMIT`, matching case
+  insensitively.
 - Check whether responsibilities remain clear and dependencies follow established
   boundaries.
 - Identify duplicated work, unused retained resources, and unexpected side effects

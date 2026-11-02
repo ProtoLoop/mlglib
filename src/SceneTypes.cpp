@@ -5,6 +5,32 @@
 #include <box3d/Box3D.h>
 #include <variant>
 
+namespace
+{
+/// Returns the world space transformation of the node.
+/// Excludes scaling that might be present in the local or ancestor transforms,
+/// though scale is applied to the translation component to ensure the world
+/// space location is correct.
+/// This is used to get the world space transformation of cameras and lights.
+TrTransformf GetWsTransform(const SceneNode& camera)
+{
+    UnitQuatf rotation = camera.GetTransform().R;
+
+    for(const SceneNode* node = camera.GetParent(); node; node = node->GetParent())
+    {
+        rotation = node->GetTransform().R * rotation;
+    }
+
+    const Mat44f& world = camera.GetWsMatrix();
+
+    return TrTransformf//
+    {
+        .R = rotation,
+        .T = Vec3f{ world[3].x, world[3].y, world[3].z },
+    };
+}
+}
+
 /// PhysicsNode
 
 PhysicsNode::PhysicsNode(const SceneNode& sceneNode, const RigidBodyIdentifier rigidBodyId)
@@ -115,6 +141,12 @@ PointLightNode::PointLightNode(SceneNode& sceneNode, const RgbColorf& color)
 {
 }
 
+TrTransformf
+PointLightNode::GetWsTransform() const
+{
+    return ::GetWsTransform(GetSceneNode());
+}
+
 /// DirectionalLightNode
 
 DirectionalLightNode::DirectionalLightNode(
@@ -124,19 +156,16 @@ DirectionalLightNode::DirectionalLightNode(
 {
 }
 
+TrTransformf
+DirectionalLightNode::GetWsTransform() const
+{
+    return ::GetWsTransform(GetSceneNode());
+}
+
 Vec3f
 DirectionalLightNode::GetDirection() const
 {
-    const float kEpsilon = 1e-6f;
-    // The forward direction of the (+Z axis) in world space.
-    const Mat44f& wsMatrix = m_SceneNode->GetWsMatrix();
-    const Vec3f forward{ wsMatrix[2][0], wsMatrix[2][1], wsMatrix[2][2] };
-    const float length = forward.Length();
-    if(MLG_VERIFY(length > kEpsilon, "Forward vector length is too small"))
-    {
-        return forward / length;
-    }
-    return Vec3f{ 0.0f, 0.0f, 1.0f };
+    return GetWsTransform().R * Vec3f::ZAXIS();
 }
 
 /// CameraNode
@@ -145,6 +174,28 @@ CameraNode::CameraNode(SceneNode& sceneNode)
     : m_SceneNode(&sceneNode),
       m_ProjectionSettings(Projection::Perspective{})
 {
+}
+
+TrTransformf
+CameraNode::GetWsTransform() const
+{
+    return ::GetWsTransform(GetSceneNode());
+}
+
+Result<>
+CameraNode::SetProjection(const Projection::Perspective& projection)
+{
+    MLG_CHECKV(Frustum::ValidateProjection(projection));
+    m_ProjectionSettings = projection;
+    return Result<>::Ok;
+}
+
+Result<>
+CameraNode::SetProjection(const Projection::Orthographic& projection)
+{
+    MLG_CHECKV(Frustum::ValidateProjection(projection));
+    m_ProjectionSettings = projection;
+    return Result<>::Ok;
 }
 
 Result<Frustum>

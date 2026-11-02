@@ -55,6 +55,12 @@ public:
     Result<GpuDepthTarget> CreateDepthBuffer(
         const uint32_t width, const uint32_t height, const std::string_view name) const;
 
+    /// Creates a depth buffer that can be used with shadow mapping.
+    /// The difference between this and a regular depth buffer is that it can
+    /// be sampled as a depth texture in shaders.
+    Result<GpuDepthTarget> CreateShadowDepthBuffer(
+        const uint32_t width, const uint32_t height, const std::string_view name) const;
+
     /// Creates a staging buffer for copying texture data to the GPU.
     Result<GpuTextureStagingBuffer> CreateTextureStagingBuffer(const uint32_t width,
         const uint32_t height,

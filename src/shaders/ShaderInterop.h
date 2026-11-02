@@ -69,7 +69,7 @@ struct MeshInstanceParams
     uint32_t TransformIndex;
 };
 
-struct CameraParams
+struct ViewProj
 {
     Mat44f View;
     Mat44f Projection;

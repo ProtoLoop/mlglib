@@ -1,8 +1,8 @@
-#include <webgpu/webgpu_cpp.h>
 #define MLG_LOGGER_NAME "CPAS"
 
-#include "FileFetcher.h"
 #include "GpuColorPass.h"
+
+#include "FileFetcher.h"
 #include "GpuHelper.h"
 #include "PerfMetrics.h"
 #include "SceneTypes.h"
@@ -27,35 +27,26 @@ struct PipelinePair
     wgpu::RenderPipeline TranslucentPipeline;
 };
 
-template<typename BindGroupType>
-Result<wgpu::BindGroupLayout>
-CreateBindGroupLayout(const wgpu::Device& gpuDevice, const std::string_view label)
-{
-    const wgpu::BindGroupLayoutDescriptor bgLayoutDesc //
-        {
-            .label = label,
-            .entryCount = std::size(BindGroupType::LayoutEntries),
-            .entries = BindGroupType::LayoutEntries.data(),
-        };
-
-    wgpu::BindGroupLayout layout = gpuDevice.CreateBindGroupLayout(&bgLayoutDesc);
-    MLG_CHECK(layout, "Failed to create bind group layout");
-
-    return layout;
-}
-
 Result<wgpu::PipelineLayout>
-CreatePipelineLayout(const wgpu::Device& gpuDevice,
-    const wgpu::BindGroupLayout& bindGroup0Layout,
-    const wgpu::BindGroupLayout& bindGroup1Layout)
+CreatePipelineLayout(const wgpu::Device& gpuDevice)
 {
-    MLG_CHECK(bindGroup0Layout, "Bind group 0 layout is not valid");
-    MLG_CHECK(bindGroup1Layout, "Bind group 1 layout is not valid");
+    auto bg0LayoutResult =
+        GpuColorPass::BindGroup0Helper::CreateBindGroupLayout(gpuDevice, "GpuColorPass::BindGroup0Layout");
+    MLG_CHECK(bg0LayoutResult, "Failed to create bind group 0 layout");
 
+    auto bg1LayoutResult =
+        GpuColorPass::BindGroup1Helper::CreateBindGroupLayout(gpuDevice, "GpuColorPass::BindGroup1Layout");
+    MLG_CHECK(bg1LayoutResult, "Failed to create bind group 1 layout");
+
+    auto bg2LayoutResult =
+        GpuColorPass::BindGroup2Helper::CreateBindGroupLayout(gpuDevice, "GpuColorPass::BindGroup2Layout");
+    MLG_CHECK(bg2LayoutResult, "Failed to create bind group 2 layout");
+    
     const wgpu::BindGroupLayout bindGroupLayouts[] //
         {
-            bindGroup0Layout,
-            bindGroup1Layout,
+            *bg0LayoutResult,
+            *bg1LayoutResult,
+            *bg2LayoutResult,
         };
 
     const wgpu::PipelineLayoutDescriptor pipelineLayoutDesc //
@@ -105,12 +96,9 @@ GetVertexBufferLayout()
 }
 
 Result<PipelinePair>
-CreateRenderPipelines(const wgpu::Device& gpuDevice,
-    const wgpu::BindGroupLayout& bg0Layout,
-    const wgpu::BindGroupLayout& bg1Layout,
-    const wgpu::ShaderModule& shader)
+CreateRenderPipelines(const wgpu::Device& gpuDevice, const wgpu::ShaderModule& shader)
 {
-    auto pipelineLayout = CreatePipelineLayout(gpuDevice, bg0Layout, bg1Layout);
+    auto pipelineLayout = CreatePipelineLayout(gpuDevice);
     MLG_CHECK(pipelineLayout, "Failed to create pipeline layout");
 
     static constexpr wgpu::BlendState translucentBlendState //
@@ -277,7 +265,7 @@ CreateRenderPipelines(const wgpu::Device& gpuDevice,
 }
 
 Result<wgpu::Sampler>
-CreateDefaultSampler(const wgpu::Device& gpuDevice)
+CreateTextureSampler(const wgpu::Device& gpuDevice)
 {
     static constexpr wgpu::SamplerDescriptor samplerDesc //
         {
@@ -317,28 +305,17 @@ GpuColorPass::CreateTask::Take()
     auto shaderResult = m_ShaderFetcher.Take();
     MLG_CHECK(shaderResult, "Failed to fetch shader: {}", ShaderPath);
 
-    auto bg0LayoutResult =
-        CreateBindGroupLayout<BindGroup0>(gpuDevice, "GpuColorPass::BindGroup0Layout");
-    MLG_CHECK(bg0LayoutResult, "Failed to create bind group 0 layout");
+    auto textureSamplerResult = CreateTextureSampler(gpuDevice);
+    MLG_CHECK(textureSamplerResult, "Failed to create texture sampler");
 
-    auto bg1LayoutResult =
-        CreateBindGroupLayout<BindGroup1>(gpuDevice, "GpuColorPass::BindGroup1Layout");
-    MLG_CHECK(bg1LayoutResult, "Failed to create bind group 1 layout");
-
-    auto samplerResult = CreateDefaultSampler(gpuDevice);
-    MLG_CHECK(samplerResult, "Failed to create default sampler");
-
-    const auto pipelineResult =
-        CreateRenderPipelines(gpuDevice, *bg0LayoutResult, *bg1LayoutResult, *shaderResult);
+    const auto pipelineResult = CreateRenderPipelines(gpuDevice, *shaderResult);
 
     MLG_CHECK(pipelineResult, "Failed to create render pipelines");
 
     return std::unique_ptr<GpuColorPass>(new GpuColorPass(*m_GpuHelper,
-        *bg0LayoutResult,
-        *bg1LayoutResult,
         pipelineResult->OpaquePipeline,
         pipelineResult->TranslucentPipeline,
-        *samplerResult));
+        *textureSamplerResult));
 }
 
 // private:
@@ -397,23 +374,17 @@ GpuColorPass::CreateTask::OnUpdate()
 /// GpuColorPass
 
 GpuColorPass::GpuColorPass(const GpuHelper& gpuHelper,
-    wgpu::BindGroupLayout bg0Layout,
-    wgpu::BindGroupLayout bg1Layout,
     wgpu::RenderPipeline opaquePipeline,
     wgpu::RenderPipeline translucentPipeline,
-    wgpu::Sampler defaultSampler)
+    wgpu::Sampler textureSampler)
     : m_GpuHelper(&gpuHelper),
-      m_BindGroup0Layout(std::move(bg0Layout)),
-      m_BindGroup1Layout(std::move(bg1Layout)),
       m_OpaquePipeline(std::move(opaquePipeline)),
       m_TranslucentPipeline(std::move(translucentPipeline)),
-      m_DefaultSampler(std::move(defaultSampler))
+      m_TextureSampler(std::move(textureSampler))
 {
-    MLG_ASSERT(m_BindGroup0Layout, "Bind group 0 layout is not valid");
-    MLG_ASSERT(m_BindGroup1Layout, "Bind group 1 layout is not valid");
     MLG_ASSERT(m_OpaquePipeline, "Opaque pipeline is not valid");
     MLG_ASSERT(m_TranslucentPipeline, "Translucent pipeline is not valid");
-    MLG_ASSERT(m_DefaultSampler, "Default sampler is not valid");
+    MLG_ASSERT(m_TextureSampler, "Texture sampler is not valid");
 }
 
 Result<>
@@ -429,15 +400,23 @@ GpuColorPass::SetGeometryBuffers(const GpuVertexBuffer& vertices, const GpuIndex
 }
 
 Result<>
-GpuColorPass::SetBindGroup(const GpuColorPass::BindGroup0& bg0)
+GpuColorPass::SetBindGroups(const GpuColorPass::BindGroup0Helper& bg0, const GpuColorPass::BindGroup1Helper& bg1)
 {
-    if(!m_BindGroup0Params || m_BindGroup0Params != bg0)
+    if(!m_BindGroup0Helper || m_BindGroup0Helper != bg0)
     {
         // Rebuild the bind group
         m_BindGroup0 = {};
     }
 
-    m_BindGroup0Params = bg0;
+    m_BindGroup0Helper = bg0;
+
+    if(!m_BindGroup1Helper || m_BindGroup1Helper != bg1)
+    {
+        // Rebuild the bind group
+        m_BindGroup1 = {};
+    }
+
+    m_BindGroup1Helper = bg1;
 
     return Result<>::Ok;
 }
@@ -497,26 +476,34 @@ GpuColorPass::Execute(std::span<MeshInstance> meshes,
     renderPass.SetScissorRect(0, 0, w, h);
 
     // Sort the meshes based on material properties to minimize state changes.
+    // Opaque meshes should come first, followed by masked meshes, followed by alpha-blended meshes.
     std::ranges::sort(meshes, {}, &MeshInstance::GetSortKey);
 
-    // Find the first alpha-blended mesh in the sorted list
-    // so we can separate opaque and alpha-blended meshes.
-    size_t firstAlphaIndex = meshes.size();
+    // Separate opaque, masked, and alpha-blended meshes.
+    // Search backwards assuming there are fewer mask/alpha-blended meshes than opaque.
+    size_t opaqueCount = meshes.size();
+    size_t maskedCount = 0;
 
-    for(; firstAlphaIndex > 0;)
+    for(; opaqueCount > 0; --opaqueCount)
     {
-        if(meshes[firstAlphaIndex - 1].GetAlphaMode() != AlphaMode::Blend)
+        if(meshes[opaqueCount - 1].GetAlphaMode() != AlphaMode::Blend)
         {
             break;
         }
-        --firstAlphaIndex;
     }
 
-    // Split the sorted meshes into opaque and alpha-blended subsets.
+    for(; opaqueCount > 0; --opaqueCount, ++maskedCount)
+    {
+        if(meshes[opaqueCount - 1].GetAlphaMode() != AlphaMode::Mask)
+        {
+            break;
+        }
+    }
 
-    const std::span<MeshInstance> allMeshes = std::span(meshes);
-    const std::span<MeshInstance> opaqueMeshes = allMeshes.subspan(0, firstAlphaIndex);
-    const std::span<MeshInstance> alphaMeshes = allMeshes.subspan(firstAlphaIndex);
+    // Combine opaque and masked meshes for now
+    const std::span<MeshInstance> opaqueMeshes = meshes.subspan(0, opaqueCount);
+    const std::span<MeshInstance> maskedMeshes = meshes.subspan(opaqueCount, maskedCount);
+    const std::span<MeshInstance> alphaMeshes = meshes.subspan(opaqueCount + maskedCount);
 
     // Track how many times we have to change materials, pipelines.
     static PerfCounter pcMaterialChanges({ .Name = "GpuColorPass.Execute.MaterialChanges" });
@@ -538,7 +525,31 @@ GpuColorPass::Execute(std::span<MeshInstance> meshes,
 
             pcMaterialChanges.Increment(1);
             currentMaterialIndex = matIndex;
-            renderPass.SetBindGroup(1, materialProperties[matIndex].GetBindGroup(), 0, nullptr);
+            renderPass.SetBindGroup(2, materialProperties[matIndex].GetBindGroup(), 0, nullptr);
+        }
+
+        const uint32_t indexCount = mesh.GetIndexCount();
+        pcTriangleCount.Increment(indexCount / 3);
+
+        renderPass.DrawIndexed(indexCount,
+            1,
+            mesh.GetFirstIndex(),
+            static_cast<int32_t>(mesh.GetBaseVertex()),
+            meshInstance.GetInstanceIndex());
+    }
+
+    // For now just render masked meshes the same as opaque meshes.
+    for(const MeshInstance& meshInstance : maskedMeshes)
+    {
+        const Mesh& mesh = meshInstance.GetMesh();
+        const uint32_t matIndex = mesh.GetMaterialIndex();
+        if(currentMaterialIndex != matIndex)
+        {
+            MLG_ASSERT(matIndex < materialProperties.size(), "Material index out of bounds");
+
+            pcMaterialChanges.Increment(1);
+            currentMaterialIndex = matIndex;
+            renderPass.SetBindGroup(2, materialProperties[matIndex].GetBindGroup(), 0, nullptr);
         }
 
         const uint32_t indexCount = mesh.GetIndexCount();
@@ -571,7 +582,7 @@ GpuColorPass::Execute(std::span<MeshInstance> meshes,
 
                 pcMaterialChanges.Increment(1);
                 currentMaterialIndex = matIndex;
-                renderPass.SetBindGroup(1, materialProperties[matIndex].GetBindGroup(), 0, nullptr);
+                renderPass.SetBindGroup(2, materialProperties[matIndex].GetBindGroup(), 0, nullptr);
             }
 
             renderPass.DrawIndexed(mesh.GetIndexCount(),
@@ -592,49 +603,47 @@ GpuColorPass::CreateMaterialBindGroup(const wgpu::Texture& texture,
     const GpuMaterialConstantsBuffer& materialConstants,
     const std::string_view name) const
 {
-    auto bgResult = BindGroup1::Create(texture, m_DefaultSampler, materialConstants);
-    MLG_CHECK(bgResult, "Failed to create bind group 1");
+    MLG_CHECKV(m_OpaquePipeline, "Pipeline is not valid");
 
-    const auto entries = bgResult->GetBindGroupEntries();
+    auto bgHelperResult = BindGroup2Helper::Create(texture, m_TextureSampler, materialConstants);
+    MLG_CHECK(bgHelperResult, "Failed to create bind group 2");
 
-    const wgpu::BindGroupDescriptor desc = //
-        {
-            .label = name,
-            .layout = m_BindGroup1Layout,
-            .entryCount = std::size(entries),
-            .entries = entries.data(),
-        };
+    const auto bgResult = bgHelperResult->CreateBindGroup(m_GpuHelper->GetDevice(),
+        m_OpaquePipeline.GetBindGroupLayout(2),
+        name);
+    MLG_CHECKV(bgResult, "Failed to create bind group 2");
 
-    const wgpu::BindGroup bindGroup = m_GpuHelper->GetDevice().CreateBindGroup(&desc);
-    MLG_CHECKV(bindGroup, "Failed to create texture bind group");
-
-    return bindGroup;
+    return bgResult;
 }
 
 // private:
 
 Result<>
-GpuColorPass::EnsureBindGroup0()
+GpuColorPass::EnsureBindGroups()
 {
-    if(m_BindGroup0)
+    if(!m_BindGroup0)
     {
-        return Result<>::Ok;
+        MLG_CHECKV(m_BindGroup0Helper, "BindGroup 0 not valid - forget to call SetBindGroups()?");
+        MLG_CHECKV(m_OpaquePipeline, "Pipeline is not valid");
+
+        const auto bgResult = m_BindGroup0Helper->CreateBindGroup(m_GpuHelper->GetDevice(),
+            m_OpaquePipeline.GetBindGroupLayout(0),
+            "GpuColorPass::BindGroup0");
+        MLG_CHECKV(bgResult, "Failed to create bind group 0");
+        m_BindGroup0 = *bgResult;
     }
+    
+    if(!m_BindGroup1)
+    {
+        MLG_CHECKV(m_BindGroup1Helper, "BindGroup 1 not valid - forget to call SetBindGroups()?");
+        MLG_CHECKV(m_OpaquePipeline, "Pipeline is not valid");
 
-    MLG_CHECKV(m_BindGroup0Params, "BindGroup 0 not valid - forget to call SetBindGroup()?");
-
-    const auto entries = m_BindGroup0Params->GetBindGroupEntries();
-
-    const wgpu::BindGroupDescriptor desc = //
-        {
-            .label = "GpuColorPass::BindGroup0",
-            .layout = m_BindGroup0Layout,
-            .entryCount = std::size(entries),
-            .entries = entries.data(),
-        };
-
-    m_BindGroup0 = m_GpuHelper->GetDevice().CreateBindGroup(&desc);
-    MLG_CHECKV(m_BindGroup0, "Failed to create bind group 0");
+        const auto bgResult = m_BindGroup1Helper->CreateBindGroup(m_GpuHelper->GetDevice(),
+            m_OpaquePipeline.GetBindGroupLayout(1),
+            "GpuColorPass::BindGroup1");
+        MLG_CHECKV(bgResult, "Failed to create bind group 1");
+        m_BindGroup1 = *bgResult;
+    }    
 
     return Result<>::Ok;
 }
@@ -642,7 +651,6 @@ GpuColorPass::EnsureBindGroup0()
 Result<wgpu::RenderPassEncoder>
 GpuColorPass::CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder)
 {
-    MLG_CHECKV(m_BindGroup0Params, "BindGroup 0 not valid - forget to call SetBindGroup()?");
     MLG_CHECKV(m_Vertices, "Vertex buffer not set - forget to call SetGeometryBuffers()?");
     MLG_CHECKV(m_Indices, "Index buffer not set - forget to call SetGeometryBuffers()?");
     MLG_CHECKV(m_RenderAttachments,
@@ -651,7 +659,7 @@ GpuColorPass::CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder)
     MLG_CHECKV(m_RenderAttachments->RenderTarget->GetFormat() == GpuHelper::kRenderTargetFormat,
         "Unexpected render target format");
 
-    MLG_CHECKV(EnsureBindGroup0());
+    MLG_CHECKV(EnsureBindGroups());
 
     const wgpu::RenderPassColorAttachment attachment //
         {
@@ -687,6 +695,7 @@ GpuColorPass::CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder)
     {
         MLG_SCOPED_TIMER("GpuColorPass.Prepare.SetPerFrameBindGroup");
         renderPass.SetBindGroup(0, m_BindGroup0, 0, nullptr);
+        renderPass.SetBindGroup(1, m_BindGroup1, 0, nullptr);
     }
 
     {
@@ -703,7 +712,6 @@ GpuColorPass::CreateRenderPassEncoder(const wgpu::CommandEncoder& cmdEncoder)
             : wgpu::IndexFormat::Uint16;
 
         renderPass.SetVertexBuffer(0, m_Vertices->GetBuffer(), 0, m_Vertices->GetSize());
-
         renderPass.SetIndexBuffer(m_Indices->GetBuffer(), idxFmt, 0, m_Indices->GetSize());
     }
 

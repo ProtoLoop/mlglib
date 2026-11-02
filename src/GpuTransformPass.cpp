@@ -13,32 +13,28 @@ constexpr const char* ComputeEntry = "cs_main";
 constexpr const char* kWorkgroupSizeOverride = "WorkgroupSizeOverride";
 constexpr size_t kWorkgroupSize = 64;
 
-Result<wgpu::BindGroupLayout>
-CreateBindGroupLayout(const wgpu::Device& gpuDevice)
-{
-    const wgpu::BindGroupLayoutDescriptor bgLayoutDesc //
-        {
-            .label = "GpuTransformPass::BindGroup0Layout",
-            .entryCount = std::size(GpuTransformPass::BindGroup0::LayoutEntries),
-            .entries = GpuTransformPass::BindGroup0::LayoutEntries.data(),
-        };
-
-    wgpu::BindGroupLayout layout = gpuDevice.CreateBindGroupLayout(&bgLayoutDesc);
-    MLG_CHECK(layout, "Failed to create bind group layout");
-
-    return layout;
-}
-
 Result<wgpu::PipelineLayout>
-CreatePipelineLayout(const wgpu::Device& gpuDevice, const wgpu::BindGroupLayout& bindGroupLayout)
+CreatePipelineLayout(const wgpu::Device& gpuDevice)
 {
-    MLG_CHECKV(bindGroupLayout, "Bind group layout is not valid");
+    auto bindGroup0Layout = GpuTransformPass::BindGroup0Helper::CreateBindGroupLayout(gpuDevice,
+        "GpuTransformPass::BindGroup0Layout");
+    MLG_CHECK(bindGroup0Layout);
+
+    auto bindGroup1Layout = GpuTransformPass::BindGroup1Helper::CreateBindGroupLayout(gpuDevice,
+        "GpuTransformPass::BindGroup1Layout");
+    MLG_CHECK(bindGroup1Layout);
+
+    const wgpu::BindGroupLayout bindGroupLayouts[] //
+        {
+            *bindGroup0Layout,
+            *bindGroup1Layout,
+        };
 
     const wgpu::PipelineLayoutDescriptor pipelineLayoutDesc //
         {
             .label = "GpuTransformPass",
-            .bindGroupLayoutCount = 1,
-            .bindGroupLayouts = &bindGroupLayout,
+            .bindGroupLayoutCount = std::size(bindGroupLayouts),
+            .bindGroupLayouts = &bindGroupLayouts[0],
         };
 
     wgpu::PipelineLayout pipelineLayout = gpuDevice.CreatePipelineLayout(&pipelineLayoutDesc);
@@ -47,9 +43,7 @@ CreatePipelineLayout(const wgpu::Device& gpuDevice, const wgpu::BindGroupLayout&
 }
 
 Result<wgpu::ComputePipeline>
-CreatePipeline(const wgpu::Device& gpuDevice,
-    const wgpu::BindGroupLayout& bindGroupLayout,
-    const wgpu::ShaderModule& shader)
+CreatePipeline(const wgpu::Device& gpuDevice, const wgpu::ShaderModule& shader)
 {
     static constexpr wgpu::ConstantEntry constants[] //
         {
@@ -59,7 +53,7 @@ CreatePipeline(const wgpu::Device& gpuDevice,
             },
         };
 
-    auto pipelineLayout = CreatePipelineLayout(gpuDevice, bindGroupLayout);
+    auto pipelineLayout = CreatePipelineLayout(gpuDevice);
     MLG_CHECK(pipelineLayout, "Failed to create pipeline layout");
 
     const wgpu::ComputePipelineDescriptor desc //
@@ -105,14 +99,10 @@ GpuTransformPass::CreateTask::Take()
 
     const wgpu::Device& gpuDevice = m_GpuHelper->GetDevice();
 
-    auto bindGroupLayout = CreateBindGroupLayout(gpuDevice);
-    MLG_CHECK(bindGroupLayout);
-
-    auto pipelineResult = CreatePipeline(gpuDevice, *bindGroupLayout, *shader);
+    auto pipelineResult = CreatePipeline(gpuDevice, *shader);
     MLG_CHECK(pipelineResult, "Failed to create pipeline");
 
-    return std::unique_ptr<GpuTransformPass>(
-        new GpuTransformPass(*m_GpuHelper, *bindGroupLayout, *pipelineResult));
+    return std::unique_ptr<GpuTransformPass>(new GpuTransformPass(*m_GpuHelper, *pipelineResult));
 }
 
 // private:
@@ -170,26 +160,30 @@ GpuTransformPass::CreateTask::OnUpdate()
 
 /// GpuTransformPass
 
-GpuTransformPass::GpuTransformPass(const GpuHelper& gpuHelper,
-    wgpu::BindGroupLayout bindGroupLayout,
-    wgpu::ComputePipeline pipeline)
+GpuTransformPass::GpuTransformPass(const GpuHelper& gpuHelper, wgpu::ComputePipeline pipeline)
     : m_GpuHelper(&gpuHelper),
-      m_BindGroup0Layout(std::move(bindGroupLayout)),
       m_Pipeline(std::move(pipeline))
 {
-    MLG_ASSERT(m_BindGroup0Layout, "Bind group layout is not valid");
     MLG_ASSERT(m_Pipeline, "Pipeline is not valid");
 }
 
 Result<>
-GpuTransformPass::SetBindGroup(const BindGroup0& bg0)
+GpuTransformPass::SetBindGroups(const BindGroup0Helper& bg0, const BindGroup1Helper& bg1)
 {
-    if(bg0 != m_BindGroup0Params)
+    if(bg0 != m_BindGroup0Helper)
     {
-        m_BindGroup0Params = bg0;
+        m_BindGroup0Helper = bg0;
 
         // Rebuild the bind group
         m_BindGroup0 = {};
+    }
+
+    if(bg1 != m_BindGroup1Helper)
+    {
+        m_BindGroup1Helper = bg1;
+
+        // Rebuild the bind group
+        m_BindGroup1 = {};
     }
 
     return Result<>::Ok;
@@ -226,9 +220,9 @@ GpuTransformPass::Execute(const wgpu::CommandEncoder& cmdEncoder)
 
     const wgpu::ComputePassEncoder computePass = std::move(*computePassResult);
 
-    MLG_CHECKV(m_BindGroup0Params, "Bind group is not valid - forget to call SetBindGroup()?");
+    MLG_CHECKV(m_BindGroup0Helper, "Bind group is not valid - forget to call SetBindGroups()?");
     const GpuWorldTransformBuffer& worldTransforms =
-        m_BindGroup0Params->GetResource<GpuWorldTransformBuffer>();
+        m_BindGroup0Helper->GetResource<GpuWorldTransformBuffer>();
     const size_t instanceCount = worldTransforms.Count();
 
     // Number of workgroups to dispatch is the number of instances divided by the workgroup size,
@@ -245,28 +239,34 @@ GpuTransformPass::Execute(const wgpu::CommandEncoder& cmdEncoder)
 // private:
 
 Result<>
-GpuTransformPass::EnsureBindGroup0()
+GpuTransformPass::EnsureBindGroups()
 {
-    if(m_BindGroup0)
+    if(!m_BindGroup0)
     {
-        return Result<>::Ok;
+        MLG_CHECKV(m_BindGroup0Helper,
+            "BindGroup 0 parameters are not valid - forget to call SetBindGroups()?");
+        MLG_CHECKV(m_Pipeline, "Pipeline is not valid");
+
+        const auto bgResult = m_BindGroup0Helper->CreateBindGroup(m_GpuHelper->GetDevice(),
+            m_Pipeline.GetBindGroupLayout(0),
+            "GpuTransformPass::BindGroup0");
+        MLG_CHECKV(bgResult, "Failed to create bind group 0");
+
+        m_BindGroup0 = *bgResult;
     }
 
-    MLG_CHECKV(m_BindGroup0Params,
-        "BindGroup 0 parameters are not valid - forget to call SetBindGroup()?");
+    if(!m_BindGroup1)
+    {
+        MLG_CHECKV(m_BindGroup1Helper,
+            "BindGroup 1 parameters are not valid - forget to call SetBindGroups()?");
 
-    const auto entries = m_BindGroup0Params->GetBindGroupEntries();
+        const auto bgResult = m_BindGroup1Helper->CreateBindGroup(m_GpuHelper->GetDevice(),
+            m_Pipeline.GetBindGroupLayout(1),
+            "GpuTransformPass::BindGroup1");
+        MLG_CHECKV(bgResult, "Failed to create bind group 1");
 
-    const wgpu::BindGroupDescriptor desc = //
-        {
-            .label = "GpuTransformPass",
-            .layout = m_BindGroup0Layout,
-            .entryCount = std::size(entries),
-            .entries = entries.data(),
-        };
-
-    m_BindGroup0 = m_GpuHelper->GetDevice().CreateBindGroup(&desc);
-    MLG_CHECKV(m_BindGroup0, "Failed to create bind group");
+        m_BindGroup1 = *bgResult;
+    }
 
     return Result<>::Ok;
 }
@@ -274,14 +274,15 @@ GpuTransformPass::EnsureBindGroup0()
 Result<wgpu::ComputePassEncoder>
 GpuTransformPass::CreateComputePassEncoder(const wgpu::CommandEncoder& cmdEncoder)
 {
-    MLG_CHECK(EnsureBindGroup0());
-    MLG_CHECKV(m_BindGroup0Params,
-        "Bind group 0 parameters are not valid - forget to call SetBindGroup()?");
+    MLG_CHECK(EnsureBindGroups());
+
+    MLG_CHECKV(m_BindGroup0Helper,
+        "Bind group 0 parameters are not valid - forget to call SetBindGroups()?");
 
     const GpuWorldTransformBuffer& worldTransforms =
-        m_BindGroup0Params->GetResource<GpuWorldTransformBuffer>();
+        m_BindGroup0Helper->GetResource<GpuWorldTransformBuffer>();
     const GpuClipSpaceTransformBuffer& clipSpaceTransforms =
-        m_BindGroup0Params->GetResource<GpuClipSpaceTransformBuffer>();
+        m_BindGroup0Helper->GetResource<GpuClipSpaceTransformBuffer>();
     MLG_CHECK(worldTransforms.GetSize() <= clipSpaceTransforms.GetSize(),
         "The ClipSpaceTransforms buffer must be at least as big as the WorldTransforms buffer");
 
@@ -290,6 +291,7 @@ GpuTransformPass::CreateComputePassEncoder(const wgpu::CommandEncoder& cmdEncode
 
     computePass.SetPipeline(m_Pipeline);
     computePass.SetBindGroup(0, m_BindGroup0);
+    computePass.SetBindGroup(1, m_BindGroup1);
 
     return computePass;
 }

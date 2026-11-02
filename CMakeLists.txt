@@ -379,8 +379,8 @@ add_custom_target(copy_sponza
 # ============================================================
 set(MLGLIB_SOURCES
   src/AssertHelper.cpp
+  src/BindGroupHelper.cpp
   src/BoundingVolumes.cpp
-  src/Cullers.cpp
   src/cgltf.cpp
   src/CoopTask.cpp
   src/DevUi.cpp
@@ -391,6 +391,7 @@ set(MLGLIB_SOURCES
   src/GpuColorPass.cpp
   src/GpuCompositorPass.cpp
   src/GpuHelper.cpp
+  src/GpuShadowPass.cpp
   src/GpuTransformPass.cpp
   src/GpuTypes.cpp
   src/ImGuiRenderer.cpp
@@ -423,7 +424,6 @@ set(MLGLIB_HEADERS
   src/BoundingVolumes.h
   src/Containers.h
   src/CoopTask.h
-  src/Cullers.h
   src/Defer.h
   src/DevUi.h
   src/FileFetcher.h
@@ -433,6 +433,7 @@ set(MLGLIB_HEADERS
   src/GpuColorPass.h
   src/GpuCompositorPass.h
   src/GpuHelper.h
+  src/GpuShadowPass.h
   src/GpuTransformPass.h
   src/GpuTypes.h
   src/Ktx2.h
@@ -541,6 +542,31 @@ add_tool_executable(Cook tools/Cook/Cook.cpp)
 target_sources(Cook PRIVATE tools/Cook/Ktx2Writer.cpp tools/Cook/MipMapChain.cpp tools/Cook/Encoders.cpp)
 target_link_libraries(Cook PRIVATE bc7enc_rdo astcenc-native-static)
 target_include_directories(Cook SYSTEM PRIVATE thirdparty/stb)
+
+# ============================================================
+# Sample: SimpleLevel
+# ============================================================
+add_sample_executable(SimpleLevel samples/SimpleLevel.cpp)
+add_dependencies(SimpleLevel copy_images)
+if(EMSCRIPTEN)
+  set_target_properties(SimpleLevel PROPERTIES SUFFIX ".html")
+
+  set(browser_shell "${CMAKE_CURRENT_SOURCE_DIR}/samples/browser-shell.html")
+  file(GLOB_RECURSE _image_sources CONFIGURE_DEPENDS LIST_DIRECTORIES false
+       "${CMAKE_SOURCE_DIR}/images/*")
+  set_property(TARGET SimpleLevel APPEND PROPERTY LINK_DEPENDS
+               "${browser_shell}" ${MLGLIB_WGSL_SOURCES} ${_image_sources})
+
+  target_link_options(SimpleLevel PRIVATE
+    "--shell-file"
+    "${browser_shell}"
+    "-sPTHREAD_POOL_SIZE=8"
+    "-sALLOW_MEMORY_GROWTH=1"
+#    "-sJSPI"
+    "--preload-file=${RESOURCE_ROOT}/images@images"
+    "--preload-file=${RESOURCE_ROOT}/shaders@shaders"
+  )
+endif()
 
 # ============================================================
 # Sample: Triangle

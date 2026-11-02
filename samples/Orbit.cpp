@@ -614,7 +614,7 @@ MainLoop()
     constexpr float kInitialCameraDistance = 40.0f;
     constexpr Vec3f kInitialCameraPos{ 0, 0, -kInitialCameraDistance };
 
-    cameraActor.SetLocation(kInitialCameraPos);
+    cameraActor.SetTranslation(kInitialCameraPos);
 
     bool pauseSim = false;
 

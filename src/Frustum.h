@@ -4,6 +4,8 @@
 #include "Result.h"
 #include "VecMath.h"
 
+#include <array>
+
 class BoundingSphere;
 
 /// Represents a view frustum defined by a camera's projection and optionally a selection rectangle
@@ -11,8 +13,12 @@ class BoundingSphere;
 /// frustum into world space or any other desired space.
 class Frustum
 {
+    constexpr static size_t kNumCorners = 8;
 public:
     Frustum() : Frustum(Projection::Perspective{}) {}
+
+    static Result<> ValidateProjection(const Projection::Perspective& settings);
+    static Result<> ValidateProjection(const Projection::Orthographic& settings);
 
     /// Create a frustum from a perspective projection.
     static Result<Frustum> Create(const Projection::Perspective& settings);
@@ -52,6 +58,8 @@ public:
     const Vec4f& GetNear() const { return m_Planes[kNear]; }
     const Vec4f& GetFar() const { return m_Planes[kFar]; }
 
+    const std::array<Vec3f, kNumCorners>& GetCorners() const { return m_Corners; }
+
 private:
     constexpr static size_t kLeft = 0;
     constexpr static size_t kRight = 1;
@@ -79,13 +87,16 @@ private:
         const Vec4f& bottom,
         const Vec4f& near,
         const Vec4f& far,
-        const Mat44f& matrix)
+        const Mat44f& matrix,
+        const std::array<Vec3f, kNumCorners>& corners)
         : m_Planes{ left, right, top, bottom, near, far },
-          m_Matrix(matrix)
+          m_Matrix(matrix),
+          m_Corners(corners)
     {
     }
 
     Vec4f m_Planes[kNumPlanes]{};
 
     Mat44f m_Matrix{ 1 };
+    std::array<Vec3f, kNumCorners> m_Corners{};
 };

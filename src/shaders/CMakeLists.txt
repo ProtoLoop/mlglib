@@ -7,6 +7,7 @@ project(WGSLToSpirv LANGUAGES CXX)
 set(WGSL_SOURCES
   "${CMAKE_CURRENT_LIST_DIR}/ColorShader.wgsl"
   "${CMAKE_CURRENT_LIST_DIR}/CompositorShader.wgsl"
+  "${CMAKE_CURRENT_LIST_DIR}/ShadowShader.wgsl"
   "${CMAKE_CURRENT_LIST_DIR}/TransformShader.wgsl"
 )
 set(SSG_WGSL_SOURCES "${WGSL_SOURCES}" PARENT_SCOPE)

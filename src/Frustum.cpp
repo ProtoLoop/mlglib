@@ -20,8 +20,8 @@ NormalizePlane(const Vec4f& plane)
 }
 } // namespace
 
-Result<Frustum>
-Frustum::Create(const Projection::Perspective& settings)
+Result<>
+Frustum::ValidateProjection(const Projection::Perspective& settings)
 {
     MLG_CHECKV(settings.Fov.GetValue() > 0 && settings.Fov.GetValue() < std::numbers::pi_v<float>,
         "FOV must be between 0 and 180 degrees");
@@ -30,16 +30,31 @@ Frustum::Create(const Projection::Perspective& settings)
     MLG_CHECKV(settings.NearClip < settings.FarClip, "Near clip must be less than far clip");
     MLG_CHECKV(settings.AspectRatio > 0, "Aspect ratio must be greater than 0");
 
+    return Result<>::Ok;
+}
+Result<> Frustum::ValidateProjection(const Projection::Orthographic& settings)
+{
+    MLG_CHECKV(settings.Height > 0, "Height must be greater than 0");
+    MLG_CHECKV(settings.AspectRatio > 0, "Aspect ratio must be greater than 0");
+    MLG_CHECKV(settings.NearClip > 0, "Near clip must be greater than 0");
+    MLG_CHECKV(settings.NearClip < settings.FarClip, "Near clip must be less than far clip");
+
+    return Result<>::Ok;
+}
+
+
+Result<Frustum>
+Frustum::Create(const Projection::Perspective& settings)
+{
+    MLG_CHECKV(ValidateProjection(settings));
+
     return Frustum(settings);
 }
 
 Result<Frustum>
 Frustum::Create(const Projection::Orthographic& settings)
 {
-    MLG_CHECKV(settings.Height > 0, "Height must be greater than 0");
-    MLG_CHECKV(settings.AspectRatio > 0, "Aspect ratio must be greater than 0");
-    MLG_CHECKV(settings.NearClip > 0, "Near clip must be greater than 0");
-    MLG_CHECKV(settings.NearClip < settings.FarClip, "Near clip must be less than far clip");
+    MLG_CHECKV(ValidateProjection(settings));
 
     return Frustum(settings);
 }
@@ -50,12 +65,7 @@ Frustum::Create(const Projection::Perspective& settings,
     const uint32_t screenWidth,
     const uint32_t screenHeight)
 {
-    MLG_CHECKV(settings.Fov.GetValue() > 0 && settings.Fov.GetValue() < std::numbers::pi_v<float>,
-        "FOV must be between 0 and 180 degrees");
-    MLG_CHECKV(settings.NearClip > 0, "Near clip must be greater than 0");
-    MLG_CHECKV(settings.FarClip > 0, "Far clip must be greater than 0");
-    MLG_CHECKV(settings.NearClip < settings.FarClip, "Near clip must be less than far clip");
-    MLG_CHECKV(settings.AspectRatio > 0, "Aspect ratio must be greater than 0");
+    MLG_CHECKV(ValidateProjection(settings));
     MLG_CHECKV(screenWidth > 0, "Screen width must be non-zero");
     MLG_CHECKV(screenHeight > 0, "Screen height must be non-zero");
 
@@ -77,6 +87,26 @@ Frustum::Frustum(const Projection::Perspective& settings)
     m_Planes[kBottom] = NormalizePlane(Vec4f(r3 + r1));
     m_Planes[kNear] = NormalizePlane(Vec4f(r2));
     m_Planes[kFar] = NormalizePlane(Vec4f(r3 - r2));
+
+    const float tanHalfFov = std::tan(settings.Fov.GetValue() * 0.5f);
+
+    const float nearH = settings.NearClip * tanHalfFov;
+    const float nearW = nearH * settings.AspectRatio;
+    const float farH = settings.FarClip * tanHalfFov;
+    const float farW = farH * settings.AspectRatio;
+
+    m_Corners = //
+        {
+            Vec3f{ -nearW, nearH, settings.NearClip },
+            Vec3f{ nearW, nearH, settings.NearClip },
+            Vec3f{ nearW, -nearH, settings.NearClip },
+            Vec3f{ -nearW, -nearH, settings.NearClip },
+
+            Vec3f{ -farW, farH, settings.FarClip },
+            Vec3f{ farW, farH, settings.FarClip },
+            Vec3f{ farW, -farH, settings.FarClip },
+            Vec3f{ -farW, -farH, settings.FarClip },
+        };
 }
 
 Frustum::Frustum(const Projection::Orthographic& settings)
@@ -92,6 +122,19 @@ Frustum::Frustum(const Projection::Orthographic& settings)
     m_Planes[kBottom] = Vec4f(0, 1, 0, halfHeight);
     m_Planes[kNear] = Vec4f(0, 0, 1, -settings.NearClip);
     m_Planes[kFar] = Vec4f(0, 0, -1, settings.FarClip);
+
+    m_Corners = //
+        {
+            Vec3f{ -halfWidth, halfHeight, settings.NearClip },
+            Vec3f{ halfWidth, halfHeight, settings.NearClip },
+            Vec3f{ halfWidth, -halfHeight, settings.NearClip },
+            Vec3f{ -halfWidth, -halfHeight, settings.NearClip },
+
+            Vec3f{ -halfWidth, halfHeight, settings.FarClip },
+            Vec3f{ halfWidth, halfHeight, settings.FarClip },
+            Vec3f{ halfWidth, -halfHeight, settings.FarClip },
+            Vec3f{ -halfWidth, -halfHeight, settings.FarClip },
+        };
 }
 
 Frustum::Frustum(const Projection::Perspective& settings,
@@ -146,6 +189,19 @@ Frustum::Frustum(const Projection::Perspective& settings,
     m_Planes[kBottom] = Vec4f(bottomNormal, 0);
     m_Planes[kNear] = Vec4f(0, 0, 1, -settings.NearClip);
     m_Planes[kFar] = Vec4f(0, 0, -1, settings.FarClip);
+
+    m_Corners = //
+        {
+            ray00 * settings.NearClip,
+            ray10 * settings.NearClip,
+            ray11 * settings.NearClip,
+            ray01 * settings.NearClip,
+
+            ray00 * settings.FarClip,
+            ray10 * settings.FarClip,
+            ray11 * settings.FarClip,
+            ray01 * settings.FarClip,
+        };
 }
 
 Frustum
@@ -159,13 +215,26 @@ Frustum::Transform(const Mat44f& transform) const
 {
     const Mat44f invTranspose = transform.InverseAffine().Transpose();
 
+    const std::array<Vec3f, kNumCorners> transformedCorners = //
+        {
+            (transform * Vec4f(m_Corners[0], 1)).xyz(),
+            (transform * Vec4f(m_Corners[1], 1)).xyz(),
+            (transform * Vec4f(m_Corners[2], 1)).xyz(),
+            (transform * Vec4f(m_Corners[3], 1)).xyz(),
+            (transform * Vec4f(m_Corners[4], 1)).xyz(),
+            (transform * Vec4f(m_Corners[5], 1)).xyz(),
+            (transform * Vec4f(m_Corners[6], 1)).xyz(),
+            (transform * Vec4f(m_Corners[7], 1)).xyz(),
+        };
+
     return Frustum(NormalizePlane(invTranspose * m_Planes[kLeft]),
         NormalizePlane(invTranspose * m_Planes[kRight]),
         NormalizePlane(invTranspose * m_Planes[kTop]),
         NormalizePlane(invTranspose * m_Planes[kBottom]),
         NormalizePlane(invTranspose * m_Planes[kNear]),
         NormalizePlane(invTranspose * m_Planes[kFar]),
-        m_Matrix);
+        m_Matrix,
+        transformedCorners);
 }
 
 Frustum::ContainsResult

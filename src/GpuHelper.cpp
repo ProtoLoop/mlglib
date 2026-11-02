@@ -1009,6 +1009,32 @@ GpuHelper::CreateDepthBuffer(
     return GpuDepthTarget(depthBuffer);
 }
 
+Result<GpuDepthTarget>
+GpuHelper::CreateShadowDepthBuffer(
+    const uint32_t width, const uint32_t height, const std::string_view name) const
+{
+    const wgpu::TextureDescriptor desc //
+        {
+            .label = name,
+            .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding,
+            .dimension = wgpu::TextureDimension::e2D,
+            .size = //
+            {
+                .width = width,
+                .height = height,
+                .depthOrArrayLayers = 1,
+            },
+            .format = kDepthBufferFormat,
+            .mipLevelCount = 1,
+            .sampleCount = 1,
+        };
+
+    const wgpu::Texture depthBuffer = GetDevice().CreateTexture(&desc);
+    MLG_CHECK(depthBuffer, "Failed to create depth buffer");
+
+    return GpuDepthTarget(depthBuffer);
+}
+
 // A note on using staging buffers to upload data to the GPU:
 // When copying data to textures we use a staging buffer.
 // When copying data to other buffers we could also use a staging buffer, but it's simpler to use

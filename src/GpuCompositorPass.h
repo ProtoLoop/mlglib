@@ -18,8 +18,8 @@ class GpuCompositorPass
 public:
     class CreateTask;
 
-    using BindGroup0 = BindGroupHelper<TextureBinding<wgpu::ShaderStage::Fragment>,
-        SamplerBinding<wgpu::ShaderStage::Fragment>>;
+    using BindGroup0Helper = BindGroupHelper<TextureBinding<wgpu::ShaderStage::Fragment>,
+        TextureSamplerBinding<wgpu::ShaderStage::Fragment>>;
 
     GpuCompositorPass() = delete;
     ~GpuCompositorPass() = default;
@@ -53,7 +53,6 @@ private:
     GpuCompositorPass(const GpuHelper& gpuHelper,
         wgpu::ShaderModule shader,
         wgpu::Sampler sampler,
-        wgpu::BindGroupLayout bindGroupLayout,
         wgpu::PipelineLayout pipelineLayout);
 
     Result<> EnsurePipeline(const wgpu::TextureFormat targetFormat);
@@ -66,7 +65,6 @@ private:
     const GpuHelper* m_GpuHelper{ nullptr };
     wgpu::ShaderModule m_Shader;
     wgpu::Sampler m_Sampler;
-    wgpu::BindGroupLayout m_BindGroup0Layout;
     wgpu::PipelineLayout m_PipelineLayout;
     wgpu::BindGroup m_BindGroup0;
     wgpu::RenderPipeline m_Pipeline;

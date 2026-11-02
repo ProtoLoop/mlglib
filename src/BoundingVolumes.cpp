@@ -94,6 +94,32 @@ BoundingBox::FromVertices(std::span<const Vertex> vertices, std::span<const Vert
     return BoundingBox(min, max);
 }
 
+BoundingBox
+BoundingBox::FromVertices(std::span<const Vec3f> vertices)
+{
+    MLG_ABORTIF(vertices.empty(), "Cannot compute bounding box from empty vertex list");
+
+    Vec3f min = vertices[0];
+    Vec3f max = vertices[0];
+
+    if(vertices.size() > 1)
+    {
+        for(size_t i = 1; i < vertices.size(); ++i)
+        {
+            const Vec3f& pos = vertices[i];
+            min.x = std::min(min.x, pos.x);
+            min.y = std::min(min.y, pos.y);
+            min.z = std::min(min.z, pos.z);
+
+            max.x = std::max(max.x, pos.x);
+            max.y = std::max(max.y, pos.y);
+            max.z = std::max(max.z, pos.z);
+        }
+    }
+
+    return BoundingBox(min, max);
+}
+
 // BoundingSphere
 
 BoundingSphere
